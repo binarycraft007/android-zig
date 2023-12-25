@@ -59,33 +59,6 @@ pub const PropAreaHeader = extern struct {
     }
 };
 
-pub const PropArea = struct {
-    header: PropAreaHeader,
-    raw: []const u8,
-
-    const header_size = @sizeOf(PropAreaHeader);
-
-    pub fn init(path: []const u8, gpa: mem.Allocator) !PropArea {
-        const file = try std.fs.cwd().openFile(path, .{});
-        defer file.close();
-        const meta = try file.metadata();
-        if (meta.size() < header_size) return error.FileTooSmall;
-        var raw = try file.readToEndAlloc(gpa, meta.size());
-        errdefer gpa.free(raw);
-        const header: PropAreaHeader = @bitCast(raw[0..header_size].*);
-        try header.versionCheck();
-        return .{ .header = header, .raw = raw };
-    }
-
-    pub fn data(self: *const PropArea) []const u8 {
-        return self.raw[header_size..];
-    }
-
-    pub fn deinit(self: PropArea, gpa: mem.Allocator) void {
-        gpa.free(self.raw);
-    }
-};
-
 /// Properties are stored in a hybrid trie/binary tree structure.
 /// Each property's name is delimited at '.' characters, and the tokens are put
 /// into a trie structure.  Siblings at each level of the trie are stored in a

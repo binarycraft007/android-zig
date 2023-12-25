@@ -1,7 +1,7 @@
 const std = @import("std");
 const mem = std.mem;
 const android = @import("android.zig");
-const PropArea = android.PropArea;
+const PropArea = @import("PropArea.zig");
 const ContextNode = @This();
 
 context: []const u8,
