@@ -8,6 +8,10 @@ test "basic functionality" {
         .allocator = testing.allocator,
     });
     defer prop.deinit();
-    const pa = try prop.getPropArea("ro.product.locale");
-    std.debug.print("{any}\n", .{pa});
+    const pa = try prop.getPropArea(.{
+        .name = "ro.product.locale",
+        .allocator = testing.allocator,
+    });
+    defer pa.deinit(testing.allocator);
+    std.debug.print("{any}\n", .{pa.data()});
 }

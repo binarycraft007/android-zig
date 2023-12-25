@@ -1,4 +1,5 @@
 const std = @import("std");
+const mem = std.mem;
 
 /// The below structs intentionally do not end with char name[0] or other tricks to allocate
 /// with a dynamic size, such that they can be added onto in the future without breaking
@@ -42,32 +43,46 @@ pub const InfoHeader = extern struct {
     root_offset: u32,
 };
 
-pub const PropArea = extern struct {
+pub const PropAreaHeader = extern struct {
     bytes_used: u32,
     serial: std.atomic.Value(u32),
     magic: u32,
     version: u32,
     reserved: [28]u32,
-    data: [*]u8,
 
     pub const magic: u32 = 0x504f5250;
     pub const version: u32 = 0xfc6ed0ab;
 
-    pub fn init(path: []const u8) !PropArea {
-        const header_size = @sizeOf(PropArea);
-        var header_buf: [header_size]u8 = undefined;
+    pub fn versionCheck(self: *const PropAreaHeader) !void {
+        if (self.magic != PropAreaHeader.magic) return error.MaigcUnmatch;
+        if (self.version != PropAreaHeader.version) return error.VersionUnmatch;
+    }
+};
+
+pub const PropArea = struct {
+    header: PropAreaHeader,
+    raw: []const u8,
+
+    const header_size = @sizeOf(PropAreaHeader);
+
+    pub fn init(path: []const u8, gpa: mem.Allocator) !PropArea {
         const file = try std.fs.cwd().openFile(path, .{});
         defer file.close();
-        const read = try file.readAll(&header_buf);
-        if (read != header_size) return error.ShortRead;
-        const prop_area: PropArea = @bitCast(header_buf);
-        try prop_area.versionCheck();
-        return prop_area;
+        const meta = try file.metadata();
+        if (meta.size() < header_size) return error.FileTooSmall;
+        var raw = try file.readToEndAlloc(gpa, meta.size());
+        errdefer gpa.free(raw);
+        const header: PropAreaHeader = @bitCast(raw[0..header_size].*);
+        try header.versionCheck();
+        return .{ .header = header, .raw = raw };
     }
 
-    pub fn versionCheck(self: *const PropArea) !void {
-        if (self.magic != PropArea.magic) return error.MaigcUnmatch;
-        if (self.version != PropArea.version) return error.VersionUnmatch;
+    pub fn data(self: *const PropArea) []const u8 {
+        return self.raw[header_size..];
+    }
+
+    pub fn deinit(self: PropArea, gpa: mem.Allocator) void {
+        gpa.free(self.raw);
     }
 };
 

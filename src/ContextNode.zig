@@ -7,7 +7,7 @@ const ContextNode = @This();
 context: []const u8,
 dirname: []const u8,
 
-pub fn propArea(self: *const ContextNode) !PropArea {
+pub fn propArea(self: *const ContextNode, gpa: mem.Allocator) !PropArea {
     var buf: [128]u8 = undefined;
     var fba = std.heap.FixedBufferAllocator.init(&buf);
     const allocator = fba.allocator();
@@ -15,5 +15,5 @@ pub fn propArea(self: *const ContextNode) !PropArea {
         self.dirname,
         self.context,
     });
-    return try PropArea.init(path);
+    return try PropArea.init(path, gpa);
 }

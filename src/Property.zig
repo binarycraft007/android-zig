@@ -38,7 +38,8 @@ pub fn init(options: InitOptions) !Property {
         .allocator = options.allocator,
         .dirname = options.path,
     });
-    _ = try PropArea.init(serial); // version check PropArea
+    const prop_area = try PropArea.init(serial, options.allocator);
+    prop_area.deinit(options.allocator);
     return .{
         .info = info_ctx,
         .allocator = options.allocator,
@@ -46,10 +47,15 @@ pub fn init(options: InitOptions) !Property {
     };
 }
 
-pub fn getPropArea(self: *Property, name: []const u8) !PropArea {
-    const indexes = self.info.getPropInfoIndexes(name);
+pub const GetPropareaOptions = struct {
+    name: []const u8,
+    allocator: mem.Allocator,
+};
+
+pub fn getPropArea(self: *Property, options: GetPropareaOptions) !PropArea {
+    const indexes = self.info.getPropInfoIndexes(options.name);
     const node = self.context_nodes[indexes.context_index];
-    return try node.propArea();
+    return try node.propArea(options.allocator);
 }
 
 pub fn deinit(self: *Property) void {
