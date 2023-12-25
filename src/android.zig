@@ -1,157 +1,103 @@
 const std = @import("std");
 
-pub const PR = enum(i32) {
-    SET_PDEATHSIG = 1,
-    GET_PDEATHSIG = 2,
+/// The below structs intentionally do not end with char name[0] or other tricks to allocate
+/// with a dynamic size, such that they can be added onto in the future without breaking
+/// backwards compatibility.
+pub const PropertyEntry = extern struct {
+    name_offset: u32,
+    namelen: u32,
 
-    GET_DUMPABLE = 3,
-    SET_DUMPABLE = 4,
+    // This is the context match for this node_; ~0u if it doesn't correspond to any.
+    context_index: u32,
+    // This is the type for this node_; ~0u if it doesn't correspond to any.
+    type_index: u32,
+};
 
-    GET_UNALIGN = 5,
-    SET_UNALIGN = 6,
+pub const TrieNodeInternal = extern struct {
+    // This points to a property entry struct, which includes the name for this node
+    property_entry: u32,
 
-    GET_KEEPCAPS = 7,
-    SET_KEEPCAPS = 8,
+    // Children are a sorted list of child nodes_; binary search them.
+    num_child_nodes: u32,
+    child_nodes: u32,
 
-    GET_FPEMU = 9,
-    SET_FPEMU = 10,
+    // Prefixes are terminating prefix matches at this node, sorted longest to smallest
+    // Take the first match sequentially found with StartsWith().
+    num_prefixes: u32,
+    prefix_entries: u32,
 
-    GET_FPEXC = 11,
-    SET_FPEXC = 12,
+    // Exact matches are a sorted list of exact matches at this node_; binary search them.
+    num_exact_matches: u32,
+    exact_match_entries: u32,
+};
 
-    GET_TIMING = 13,
-    SET_TIMING = 14,
+pub const InfoHeader = extern struct {
+    // The current version of this data as created by property service.
+    current_version: u32,
+    // The lowest version of libc that can properly parse this data.
+    min_version: u32,
+    size: u32,
+    contexts_offset: u32,
+    types_offset: u32,
+    root_offset: u32,
+};
 
-    SET_NAME = 15,
-    GET_NAME = 16,
+pub const PropArea = extern struct {
+    bytes_used: u32,
+    serial: std.atomic.Value(u32),
+    magic: u32,
+    version: u32,
+    reserved: [28]u32,
+    data: [*]u8,
 
-    GET_ENDIAN = 19,
-    SET_ENDIAN = 20,
+    pub const magic: u32 = 0x504f5250;
+    pub const version: u32 = 0xfc6ed0ab;
 
-    GET_SECCOMP = 21,
-    SET_SECCOMP = 22,
+    pub fn versionCheck(self: *const PropArea) !void {
+        if (self.magic != PropArea.magic) return error.MaigcUnmatch;
+        if (self.version != PropArea.version) return error.VersionUnmatch;
+    }
+};
 
-    CAPBSET_READ = 23,
-    CAPBSET_DROP = 24,
+/// Properties are stored in a hybrid trie/binary tree structure.
+/// Each property's name is delimited at '.' characters, and the tokens are put
+/// into a trie structure.  Siblings at each level of the trie are stored in a
+/// binary tree.  For instance, "ro.secure"="1" could be stored as follows:
+///
+/// +-----+   children    +----+   children    +--------+
+/// |     |-------------->| ro |-------------->| secure |
+/// +-----+               +----+               +--------+
+///                       /    \                /   |
+///                 left /      \ right   left /    |  prop   +===========+
+///                     v        v            v     +-------->| ro.secure |
+///                  +-----+   +-----+     +-----+            +-----------+
+///                  | net |   | sys |     | com |            |     1     |
+///                  +-----+   +-----+     +-----+            +===========+
 
-    GET_TSC = 25,
-    SET_TSC = 26,
+// Represents a node in the trie.
+pub const PropTrieNode = extern struct {
+    namelen: u32,
 
-    GET_SECUREBITS = 27,
-    SET_SECUREBITS = 28,
+    // The property trie is updated only by the init process (single threaded) which provides
+    // property service. And it can be read by multiple threads at the same time.
+    // As the property trie is not protected by locks, we use atomic_uint_least32_t types for the
+    // left, right, children "pointers" in the trie node. To make sure readers who see the
+    // change of "pointers" can also notice the change of prop_trie_node structure contents pointed by
+    // the "pointers", we always use release-consume ordering pair when accessing these "pointers".
 
-    SET_TIMERSLACK = 29,
-    GET_TIMERSLACK = 30,
+    // prop "points" to prop_info structure if there is a propery associated with the trie node.
+    // Its situation is similar to the left, right, children "pointers". So we use
+    // atomic_uint_least32_t and release-consume ordering to protect it as well.
 
-    TASK_PERF_EVENTS_DISABLE = 31,
-    TASK_PERF_EVENTS_ENABLE = 32,
+    // We should also avoid rereading these fields redundantly, since not
+    // all processor implementations ensure that multiple loads from the
+    // same field are carried out in the right order.
+    prop: std.atomic.Value(u32),
 
-    MCE_KILL = 33,
+    left: std.atomic.Value(u32),
+    right: std.atomic.Value(u32),
 
-    MCE_KILL_GET = 34,
+    children: std.atomic.Value(u32),
 
-    SET_MM = 35,
-
-    SET_PTRACER = 0x59616d61,
-
-    SET_CHILD_SUBREAPER = 36,
-    GET_CHILD_SUBREAPER = 37,
-
-    SET_NO_NEW_PRIVS = 38,
-    GET_NO_NEW_PRIVS = 39,
-
-    GET_TID_ADDRESS = 40,
-
-    SET_THP_DISABLE = 41,
-    GET_THP_DISABLE = 42,
-
-    MPX_ENABLE_MANAGEMENT = 43,
-    MPX_DISABLE_MANAGEMENT = 44,
-
-    SET_FP_MODE = 45,
-    GET_FP_MODE = 46,
-
-    CAP_AMBIENT = 47,
-
-    SVE_SET_VL = 50,
-    SVE_GET_VL = 51,
-
-    GET_SPECULATION_CTRL = 52,
-    SET_SPECULATION_CTRL = 53,
-
-    _,
-
-    pub const UNALIGN_NOPRINT = 1;
-    pub const UNALIGN_SIGBUS = 2;
-
-    pub const FPEMU_NOPRINT = 1;
-    pub const FPEMU_SIGFPE = 2;
-
-    pub const FP_EXC_SW_ENABLE = 0x80;
-    pub const FP_EXC_DIV = 0x010000;
-    pub const FP_EXC_OVF = 0x020000;
-    pub const FP_EXC_UND = 0x040000;
-    pub const FP_EXC_RES = 0x080000;
-    pub const FP_EXC_INV = 0x100000;
-    pub const FP_EXC_DISABLED = 0;
-    pub const FP_EXC_NONRECOV = 1;
-    pub const FP_EXC_ASYNC = 2;
-    pub const FP_EXC_PRECISE = 3;
-
-    pub const TIMING_STATISTICAL = 0;
-    pub const TIMING_TIMESTAMP = 1;
-
-    pub const ENDIAN_BIG = 0;
-    pub const ENDIAN_LITTLE = 1;
-    pub const ENDIAN_PPC_LITTLE = 2;
-
-    pub const TSC_ENABLE = 1;
-    pub const TSC_SIGSEGV = 2;
-
-    pub const MCE_KILL_CLEAR = 0;
-    pub const MCE_KILL_SET = 1;
-
-    pub const MCE_KILL_LATE = 0;
-    pub const MCE_KILL_EARLY = 1;
-    pub const MCE_KILL_DEFAULT = 2;
-
-    pub const SET_MM_START_CODE = 1;
-    pub const SET_MM_END_CODE = 2;
-    pub const SET_MM_START_DATA = 3;
-    pub const SET_MM_END_DATA = 4;
-    pub const SET_MM_START_STACK = 5;
-    pub const SET_MM_START_BRK = 6;
-    pub const SET_MM_BRK = 7;
-    pub const SET_MM_ARG_START = 8;
-    pub const SET_MM_ARG_END = 9;
-    pub const SET_MM_ENV_START = 10;
-    pub const SET_MM_ENV_END = 11;
-    pub const SET_MM_AUXV = 12;
-    pub const SET_MM_EXE_FILE = 13;
-    pub const SET_MM_MAP = 14;
-    pub const SET_MM_MAP_SIZE = 15;
-
-    pub const SET_PTRACER_ANY = std.math.maxInt(c_ulong);
-
-    pub const FP_MODE_FR = 1 << 0;
-    pub const FP_MODE_FRE = 1 << 1;
-
-    pub const CAP_AMBIENT_IS_SET = 1;
-    pub const CAP_AMBIENT_RAISE = 2;
-    pub const CAP_AMBIENT_LOWER = 3;
-    pub const CAP_AMBIENT_CLEAR_ALL = 4;
-
-    pub const SVE_SET_VL_ONEXEC = 1 << 18;
-    pub const SVE_VL_LEN_MASK = 0xffff;
-    pub const SVE_VL_INHERIT = 1 << 17;
-
-    pub const SPEC_STORE_BYPASS = 0;
-    pub const SPEC_NOT_AFFECTED = 0;
-    pub const SPEC_PRCTL = 1 << 0;
-    pub const SPEC_ENABLE = 1 << 1;
-    pub const SPEC_DISABLE = 1 << 2;
-    pub const SPEC_FORCE_DISABLE = 1 << 3;
-
-    pub const PR_SET_VMA = 0x53564d41;
-    pub const PR_SET_VMA_ANON_NAME = 0;
+    name: [*]u8,
 };

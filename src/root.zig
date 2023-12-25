@@ -2,7 +2,13 @@ const std = @import("std");
 const testing = std.testing;
 pub const Property = @import("Property.zig");
 
-test "basic add functionality" {
-    const prop = try Property.init(.{ .path = "testdata/dev/__properties__" });
-    _ = prop;
+test "basic functionality" {
+    const path = "testdata/dev/__properties__";
+    var prop = try Property.init(.{
+        .path = path,
+        .allocator = testing.allocator,
+    });
+    defer prop.deinit();
+    const pa = prop.getPropArea("ro.product.locale");
+    std.debug.print("{any}\n", .{pa});
 }
