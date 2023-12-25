@@ -53,6 +53,18 @@ pub const PropArea = extern struct {
     pub const magic: u32 = 0x504f5250;
     pub const version: u32 = 0xfc6ed0ab;
 
+    pub fn init(path: []const u8) !PropArea {
+        const header_size = @sizeOf(PropArea);
+        var header_buf: [header_size]u8 = undefined;
+        const file = try std.fs.cwd().openFile(path, .{});
+        defer file.close();
+        const read = try file.readAll(&header_buf);
+        if (read != header_size) return error.ShortRead;
+        const prop_area: PropArea = @bitCast(header_buf);
+        try prop_area.versionCheck();
+        return prop_area;
+    }
+
     pub fn versionCheck(self: *const PropArea) !void {
         if (self.magic != PropArea.magic) return error.MaigcUnmatch;
         if (self.version != PropArea.version) return error.VersionUnmatch;

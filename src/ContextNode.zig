@@ -15,14 +15,5 @@ pub fn propArea(self: *const ContextNode) !PropArea {
         self.dirname,
         self.context,
     });
-    const header_size = @sizeOf(PropArea);
-    var header_buf: [header_size]u8 = undefined;
-    std.debug.print("{s}\n", .{path});
-    const file = try std.fs.cwd().openFile(path, .{});
-    defer file.close();
-    const read = try file.readAll(&header_buf);
-    if (read != header_size) return error.ShortRead;
-    const prop_area: PropArea = @bitCast(header_buf);
-    try prop_area.versionCheck();
-    return prop_area;
+    return try PropArea.init(path);
 }
