@@ -73,7 +73,3 @@ pub fn toPropInfo(self: *const PropTrieNode, offset: usize) PropInfo {
         .header = self.prop_area.parseType(*const PropInfoHeader, offset),
     };
 }
-
-pub fn parseType(self: *const PropTrieNode, comptime T: type, off: usize) T {
-    return @ptrCast(@alignCast(&self.data[off]));
-}
