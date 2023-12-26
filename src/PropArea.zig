@@ -28,6 +28,10 @@ pub fn data(self: *const PropArea) []const u8 {
     return self.raw[header_size..];
 }
 
+pub fn dirtyBackupArea(self: *const PropArea) []const u8 {
+    return self.data()[0..PropTrieNode.header_size];
+}
+
 pub fn parseType(self: *const PropArea, comptime T: type, off: usize) T {
     return @ptrCast(@alignCast(&self.data()[off]));
 }
