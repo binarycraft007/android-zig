@@ -65,13 +65,13 @@ pub fn find(self: *Property, options: FindOptions) !PropInfo {
     var current: PropTrieNode = trie;
     while (true) {
         const sep = mem.indexOf(u8, remaining_name, ".");
-        const want_suntree = sep != null;
-        const substr_size = if (want_suntree) sep else remaining_name.len;
+        const want_subtree = sep != null;
+        const substr_size = if (want_subtree) sep else remaining_name.len;
         const children_offset = current.header.children.load(.Monotonic);
         var root: PropTrieNode = undefined;
         if (children_offset != 0) root = current.getNode(.children);
         current = try root.find(remaining_name[0..substr_size.?]);
-        if (!want_suntree) break;
+        if (!want_subtree) break;
         remaining_name = remaining_name[sep.? + 1 ..];
     }
 
