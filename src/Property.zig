@@ -12,7 +12,7 @@ const Property = @This();
 const prop_tree_file = "/dev/__properties__/property_info";
 
 info: InfoContext,
-context_nodes: []ContextNode,
+path: []const u8,
 allocator: mem.Allocator,
 
 pub const InitOptions = struct {
@@ -33,17 +33,12 @@ pub fn init(options: InitOptions) !Property {
         "properties_serial",
     });
     try posix.access(tree, posix.F_OK);
-    var info_ctx = try InfoContext.init(options.allocator, tree);
-    const context_nodes = try info_ctx.initContextNodes(.{
-        .allocator = options.allocator,
-        .dirname = options.path,
-    });
     const prop_area = try PropArea.init(serial, options.allocator);
     prop_area.deinit(options.allocator);
     return .{
-        .info = info_ctx,
+        .path = options.path,
+        .info = try InfoContext.init(options.allocator, tree),
         .allocator = options.allocator,
-        .context_nodes = context_nodes,
     };
 }
 
@@ -54,11 +49,13 @@ pub const GetPropareaOptions = struct {
 
 pub fn getPropArea(self: *Property, options: GetPropareaOptions) !PropArea {
     const indexes = self.info.getPropInfoIndexes(options.name);
-    const node = self.context_nodes[indexes.context_index];
+    const node = self.info.getContextNode(.{
+        .dirname = self.path,
+        .index = indexes.context_index,
+    });
     return try node.propArea(options.allocator);
 }
 
 pub fn deinit(self: *Property) void {
     self.info.deinit(self.allocator);
-    self.allocator.free(self.context_nodes);
 }

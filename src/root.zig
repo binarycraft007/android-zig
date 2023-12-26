@@ -13,5 +13,6 @@ test "basic functionality" {
         .allocator = testing.allocator,
     });
     defer pa.deinit(testing.allocator);
-    std.debug.print("{any}\n", .{pa.data()});
+    const used = pa.raw[0..pa.header.bytes_used];
+    std.debug.print("{any}\n", .{used});
 }

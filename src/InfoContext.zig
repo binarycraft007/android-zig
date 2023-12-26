@@ -57,25 +57,19 @@ pub fn deinit(self: *InfoContext, gpa: mem.Allocator) void {
     gpa.free(self.raw);
 }
 
-const InitContextNodesOptions = struct {
+pub const GetContextNodeOptions = struct {
+    index: usize,
     dirname: []const u8,
-    allocator: mem.Allocator,
 };
 
-pub fn initContextNodes(self: *InfoContext, options: InitContextNodesOptions) ![]ContextNode {
-    var nodes = std.ArrayList(ContextNode).init(options.allocator);
-    const num_contexts = self.numContexts();
-    for (0..num_contexts) |i| {
-        const offset = self.header.contexts_offset + @sizeOf(u32);
-        const context = self.parseType([*]u32, offset);
-        const context_cstr = self.parseType([*c]const u8, context[i]);
-        const context_node: ContextNode = .{
-            .context = mem.span(context_cstr),
-            .dirname = options.dirname,
-        };
-        try nodes.append(context_node);
-    }
-    return nodes.toOwnedSlice();
+pub fn getContextNode(self: *InfoContext, options: GetContextNodeOptions) ContextNode {
+    const offset = self.header.contexts_offset + @sizeOf(u32);
+    const context = self.parseType([*]u32, offset);
+    const context_cstr = self.parseType([*c]const u8, context[options.index]);
+    return .{
+        .context = mem.span(context_cstr),
+        .dirname = options.dirname,
+    };
 }
 
 pub fn size(self: *InfoContext) usize {
