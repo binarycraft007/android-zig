@@ -104,7 +104,7 @@ pub fn getPropInfoIndexes(self: *InfoContext, name: []const u8) EntryIndex {
     }
     for (0..trie_node.numOfExtactMatches()) |i| {
         const name_match = trie_node.extactMatchName(i);
-        if (mem.order(u8, name_match, remaining_name) == .eq) {
+        if (mem.eql(u8, name_match, remaining_name)) {
             if (trie_node.extactMatch(i).context_index != 0xFFFFFFFF) {
                 entry_indexes.context_index = trie_node.extactMatch(i).context_index;
             }

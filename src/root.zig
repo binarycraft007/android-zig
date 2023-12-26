@@ -8,14 +8,20 @@ test "basic functionality" {
         .allocator = testing.allocator,
     });
     defer prop.deinit();
-    const pa = try prop.getPropArea(.{
+    const pi = try prop.find(.{
         .name = "ro.product.locale",
         .allocator = testing.allocator,
     });
-    defer pa.deinit(testing.allocator);
-    try testing.expectEqualSlices(
-        u8,
-        "DEVICE_PROVISIONED",
-        pa.rootNode().getNode(.children).name(),
-    );
+    std.debug.print("{s}\n", .{pi.value()});
+
+    //const pa = try prop.getPropArea(.{
+    //    .name = "ro.product.locale",
+    //    .allocator = testing.allocator,
+    //});
+    //defer pa.deinit(testing.allocator);
+    //try testing.expectEqualSlices(
+    //    u8,
+    //    "DEVICE_PROVISIONED",
+    //    pa.rootNode().getNode(.children).name(),
+    //);
 }

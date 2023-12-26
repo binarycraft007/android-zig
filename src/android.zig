@@ -99,3 +99,33 @@ pub const PropTrieNodeHeader = extern struct {
 
     children: std.atomic.Value(u32),
 };
+
+pub const PropInfoHeader = extern struct {
+    // Read only properties will not set anything but the bottom most bit of serial and the top byte.
+    // We borrow the 2nd from the top byte for extra flags, and use the bottom most bit of that for
+    // our first user, kLongFlag.
+    pub const long_flag: u32 = 1 << 16;
+    pub const prop_value_max: usize = 92;
+
+    // The error message fits in part of a union with the previous 92 char property value so there
+    // must be room left over after the error message for the offset to the new longer property value
+    // and future expansion fields if needed. Note that this value cannot ever increase.  The offset
+    // to the new longer property value appears immediately after it, so an increase of this size will
+    // break compatibility.
+    pub const long_error_buf_size: usize = 56;
+
+    serial: std.atomic.Value(u32),
+    // we need to keep this buffer around because the property
+    // value can be modified whereas name is constant.
+    property: extern union {
+        value: [prop_value_max]u8,
+        long_property: extern struct {
+            error_message: [long_error_buf_size]u8,
+            offset: u32,
+        },
+    },
+
+    pub fn isLong(self: *const PropInfoHeader) bool {
+        return self.serial.load(.Monotonic) & long_flag != 0;
+    }
+};

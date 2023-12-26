@@ -4,9 +4,11 @@ const fs = std.fs;
 const mem = std.mem;
 const android = @import("android.zig");
 const PropArea = @import("PropArea.zig");
+const PropInfo = @import("PropInfo.zig");
 const ContextNode = @import("ContextNode.zig");
 const InfoHeader = android.InfoHeader;
 const InfoContext = @import("InfoContext.zig");
+const PropTrieNode = @import("PropTrieNode.zig");
 const Property = @This();
 
 const prop_tree_root = "/dev/__properties__";
@@ -42,18 +44,43 @@ pub fn init(options: InitOptions) !Property {
     };
 }
 
-pub const GetPropareaOptions = struct {
-    name: []const u8,
-    allocator: mem.Allocator,
-};
-
-pub fn getPropArea(self: *Property, options: GetPropareaOptions) !PropArea {
+pub fn getPropArea(self: *Property, options: FindOptions) !PropArea {
     const indexes = self.info.getPropInfoIndexes(options.name);
     const node = self.info.getContextNode(.{
         .dirname = self.path,
         .index = indexes.context_index,
     });
     return try node.propArea(options.allocator);
+}
+
+pub const FindOptions = struct {
+    name: []const u8,
+    allocator: mem.Allocator,
+};
+
+pub fn find(self: *Property, options: FindOptions) !PropInfo {
+    const node = try self.getPropArea(options);
+    defer node.deinit(options.allocator);
+    const trie = node.rootNode();
+    var remaining_name = options.name;
+    var current: PropTrieNode = trie;
+    while (true) {
+        const sep = mem.indexOf(u8, remaining_name, ".");
+        const want_suntree = sep != null;
+        const substr_size = if (want_suntree) sep else remaining_name.len;
+        const children_offset = current.header.children.load(.Monotonic);
+        var root: PropTrieNode = undefined;
+        if (children_offset != 0) {
+            root = current.getNode(.children);
+        }
+        current = try root.find(remaining_name[0..substr_size.?]);
+        if (!want_suntree) break;
+        remaining_name = remaining_name[sep.? + 1 ..];
+    }
+
+    const prop_offset = current.header.prop.load(.Monotonic);
+    if (prop_offset != 0) return current.toPropInfo(prop_offset);
+    return error.NotFound;
 }
 
 pub fn deinit(self: *Property) void {
