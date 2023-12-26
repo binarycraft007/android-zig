@@ -8,6 +8,7 @@ const PropArea = @This();
 
 header: PropAreaHeader,
 raw: []const u8,
+allocator: mem.Allocator,
 
 pub const header_size = @sizeOf(PropAreaHeader);
 
@@ -20,7 +21,7 @@ pub fn init(path: []const u8, gpa: mem.Allocator) !PropArea {
     errdefer gpa.free(raw);
     const header: PropAreaHeader = @bitCast(raw[0..header_size].*);
     try header.versionCheck();
-    return .{ .header = header, .raw = raw };
+    return .{ .header = header, .raw = raw, .allocator = gpa };
 }
 
 pub fn data(self: *const PropArea) []const u8 {
@@ -34,11 +35,11 @@ pub fn parseType(self: *const PropArea, comptime T: type, off: usize) T {
 pub fn rootNode(self: *const PropArea) PropTrieNode {
     return .{
         .offset = 0,
-        .data = self.data(),
+        .prop_area = self.*,
         .header = self.parseType(*const PropTrieNodeHeader, 0),
     };
 }
 
-pub fn deinit(self: PropArea, gpa: mem.Allocator) void {
-    gpa.free(self.raw);
+pub fn deinit(self: PropArea) void {
+    self.allocator.free(self.raw);
 }

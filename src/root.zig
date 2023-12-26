@@ -12,16 +12,10 @@ test "basic functionality" {
         .name = "ro.product.locale",
         .allocator = testing.allocator,
     });
-    std.debug.print("{s}\n", .{pi.value()});
-
-    //const pa = try prop.getPropArea(.{
-    //    .name = "ro.product.locale",
-    //    .allocator = testing.allocator,
-    //});
-    //defer pa.deinit(testing.allocator);
-    //try testing.expectEqualSlices(
-    //    u8,
-    //    "DEVICE_PROVISIONED",
-    //    pa.rootNode().getNode(.children).name(),
-    //);
+    defer pi.deinit();
+    try testing.expectEqualSlices(
+        u8,
+        "en-US",
+        pi.value(), // long_value is supported
+    );
 }

@@ -5,11 +5,12 @@ const PropAreaHeader = android.PropAreaHeader;
 const PropTrieNodeHeader = android.PropTrieNodeHeader;
 const PropInfoHeader = android.PropInfoHeader;
 const PropInfo = @import("PropInfo.zig");
+const PropArea = @import("PropArea.zig");
 const PropTrieNode = @This();
 
 offset: usize,
 header: *const PropTrieNodeHeader,
-data: []const u8,
+prop_area: PropArea,
 
 pub const header_size = @sizeOf(PropTrieNodeHeader);
 
@@ -23,13 +24,13 @@ pub fn getNode(self: *const PropTrieNode, comptime member: Member) PropTrieNode 
     const off = @field(self.header, @tagName(member)).load(.SeqCst);
     return .{
         .offset = off,
-        .data = self.data,
-        .header = self.parseType(*const PropTrieNodeHeader, off),
+        .prop_area = self.prop_area,
+        .header = self.prop_area.parseType(*const PropTrieNodeHeader, off),
     };
 }
 
 pub fn name(self: *const PropTrieNode) []const u8 {
-    const ptr = self.parseType([*]const u8, self.offset + header_size);
+    const ptr = self.prop_area.parseType([*]const u8, self.offset + header_size);
     return ptr[0..self.header.namelen];
 }
 
@@ -68,8 +69,8 @@ fn comparePropName(name_in: []const u8, current: []const u8) std.math.Order {
 pub fn toPropInfo(self: *const PropTrieNode, offset: usize) PropInfo {
     return .{
         .offset = offset,
-        .data = self.data,
-        .header = self.parseType(*const PropInfoHeader, offset),
+        .prop_area = self.prop_area,
+        .header = self.prop_area.parseType(*const PropInfoHeader, offset),
     };
 }
 

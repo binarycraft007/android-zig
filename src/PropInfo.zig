@@ -4,30 +4,31 @@ const android = @import("android.zig");
 const PropAreaHeader = android.PropAreaHeader;
 const PropInfoHeader = android.PropInfoHeader;
 const PropTrieNode = @import("PropTrieNode.zig");
+const PropArea = @import("PropArea.zig");
 const PropInfo = @This();
 
 const header_size = @sizeOf(PropInfoHeader);
 
 header: *const PropInfoHeader,
 offset: usize,
-data: []const u8,
+prop_area: PropArea,
 
 pub fn value(self: *const PropInfo) []const u8 {
     if (self.header.isLong()) {
         const offset = self.header.property.long_property.offset;
-        const cstr = self.parseType([*c]const u8, offset);
+        const cstr = self.prop_area.parseType([*c]const u8, offset);
         return mem.span(cstr);
     } else {
-        return &self.header.property.value;
+        return mem.sliceTo(self.header.property.value[0..], 0x0);
     }
 }
 
 pub fn name(self: *const PropInfo) []const u8 {
     const offset = self.offset + header_size;
-    const cstr = self.parseType([*c]const u8, offset);
+    const cstr = self.prop_area.parseType([*c]const u8, offset);
     return mem.span(cstr);
 }
 
-pub fn parseType(self: *const PropInfo, comptime T: type, off: usize) T {
-    return @ptrCast(@alignCast(&self.data[off]));
+pub fn deinit(self: *const PropInfo) void {
+    self.prop_area.deinit();
 }

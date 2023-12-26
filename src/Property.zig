@@ -36,7 +36,7 @@ pub fn init(options: InitOptions) !Property {
     });
     try posix.access(tree, posix.F_OK);
     const prop_area = try PropArea.init(serial, options.allocator);
-    prop_area.deinit(options.allocator);
+    prop_area.deinit();
     return .{
         .path = options.path,
         .info = try InfoContext.init(options.allocator, tree),
@@ -60,7 +60,6 @@ pub const FindOptions = struct {
 
 pub fn find(self: *Property, options: FindOptions) !PropInfo {
     const node = try self.getPropArea(options);
-    defer node.deinit(options.allocator);
     const trie = node.rootNode();
     var remaining_name = options.name;
     var current: PropTrieNode = trie;
@@ -70,9 +69,7 @@ pub fn find(self: *Property, options: FindOptions) !PropInfo {
         const substr_size = if (want_suntree) sep else remaining_name.len;
         const children_offset = current.header.children.load(.Monotonic);
         var root: PropTrieNode = undefined;
-        if (children_offset != 0) {
-            root = current.getNode(.children);
-        }
+        if (children_offset != 0) root = current.getNode(.children);
         current = try root.find(remaining_name[0..substr_size.?]);
         if (!want_suntree) break;
         remaining_name = remaining_name[sep.? + 1 ..];
