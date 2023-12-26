@@ -61,20 +61,14 @@ pub const FindOptions = struct {
 pub fn find(self: *Property, options: FindOptions) !PropInfo {
     const node = try self.getPropArea(options);
     const trie = node.rootNode();
-    var remaining_name = options.name;
     var current: PropTrieNode = trie;
-    while (true) {
-        const sep = mem.indexOf(u8, remaining_name, ".");
-        const want_subtree = sep != null;
-        const substr_size = if (want_subtree) sep else remaining_name.len;
+    var it = mem.split(u8, options.name, ".");
+    while (it.next()) |name_const| {
         const children_offset = current.header.children.load(.Monotonic);
         var root: PropTrieNode = undefined;
         if (children_offset != 0) root = current.getNode(.children);
-        current = try root.find(remaining_name[0..substr_size.?]);
-        if (!want_subtree) break;
-        remaining_name = remaining_name[sep.? + 1 ..];
+        current = try root.find(name_const);
     }
-
     const prop_offset = current.header.prop.load(.Monotonic);
     if (prop_offset != 0) return current.toPropInfo(prop_offset);
     return error.NotFound;

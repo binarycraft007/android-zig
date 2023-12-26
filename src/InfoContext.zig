@@ -88,19 +88,18 @@ pub fn getPropInfoIndexes(self: *InfoContext, name: []const u8) EntryIndex {
     var entry_indexes: EntryIndex = .{};
     var trie_node = self.rootNode();
     var remaining_name: []const u8 = name;
-    while (true) {
-        const sep = mem.indexOf(u8, remaining_name, ".");
+    var it = mem.split(u8, remaining_name, ".");
+    while (it.next()) |name_const| {
+        remaining_name = name_const;
         if (trie_node.contextIndex() != 0xFFFFFFFF) {
             entry_indexes.context_index = trie_node.contextIndex();
         }
         if (trie_node.typeIndex() != 0xFFFFFFFF) {
             entry_indexes.type_index = trie_node.typeIndex();
         }
-        entry_indexes.checkPrefixMatch(remaining_name, &trie_node);
-        if (sep == null) break;
-        const child = trie_node.getChild(remaining_name[0..sep.?]) catch break;
+        entry_indexes.checkPrefixMatch(name_const, &trie_node);
+        const child = trie_node.getChild(name_const) catch break;
         trie_node = child;
-        remaining_name = remaining_name[sep.? + 1 ..];
     }
     for (0..trie_node.numOfExtactMatches()) |i| {
         const name_match = trie_node.extactMatchName(i);
