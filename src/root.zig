@@ -13,6 +13,9 @@ test "basic functionality" {
         .allocator = testing.allocator,
     });
     defer pa.deinit(testing.allocator);
-    const used = pa.raw[0..pa.header.bytes_used];
-    std.debug.print("{any}\n", .{used});
+    try testing.expectEqualSlices(
+        u8,
+        "DEVICE_PROVISIONED",
+        pa.rootNode().getNode(.children).name(),
+    );
 }

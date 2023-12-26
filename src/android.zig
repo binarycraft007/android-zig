@@ -75,7 +75,7 @@ pub const PropAreaHeader = extern struct {
 ///                  +-----+   +-----+     +-----+            +===========+
 
 // Represents a node in the trie.
-pub const PropTrieNode = extern struct {
+pub const PropTrieNodeHeader = extern struct {
     namelen: u32,
 
     // The property trie is updated only by the init process (single threaded) which provides
@@ -98,6 +98,4 @@ pub const PropTrieNode = extern struct {
     right: std.atomic.Value(u32),
 
     children: std.atomic.Value(u32),
-
-    name: [*]u8,
 };

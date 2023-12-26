@@ -9,14 +9,14 @@ const InfoHeader = android.InfoHeader;
 const InfoContext = @import("InfoContext.zig");
 const Property = @This();
 
-const prop_tree_file = "/dev/__properties__/property_info";
+const prop_tree_root = "/dev/__properties__";
 
 info: InfoContext,
 path: []const u8,
 allocator: mem.Allocator,
 
 pub const InitOptions = struct {
-    path: []const u8 = prop_tree_file,
+    path: []const u8 = prop_tree_root,
     allocator: mem.Allocator,
 };
 

@@ -2,12 +2,14 @@ const std = @import("std");
 const mem = std.mem;
 const android = @import("android.zig");
 const PropAreaHeader = android.PropAreaHeader;
+const PropTrieNodeHeader = android.PropTrieNodeHeader;
+const PropTrieNode = @import("PropTrieNode.zig");
 const PropArea = @This();
 
 header: PropAreaHeader,
 raw: []const u8,
 
-const header_size = @sizeOf(PropAreaHeader);
+pub const header_size = @sizeOf(PropAreaHeader);
 
 pub fn init(path: []const u8, gpa: mem.Allocator) !PropArea {
     const file = try std.fs.cwd().openFile(path, .{});
@@ -23,6 +25,18 @@ pub fn init(path: []const u8, gpa: mem.Allocator) !PropArea {
 
 pub fn data(self: *const PropArea) []const u8 {
     return self.raw[header_size..];
+}
+
+pub fn parseType(self: *const PropArea, comptime T: type, off: usize) T {
+    return @ptrCast(@alignCast(&self.data()[off]));
+}
+
+pub fn rootNode(self: *const PropArea) PropTrieNode {
+    return .{
+        .offset = 0,
+        .data = self.data(),
+        .header = self.parseType(*const PropTrieNodeHeader, 0),
+    };
 }
 
 pub fn deinit(self: PropArea, gpa: mem.Allocator) void {
