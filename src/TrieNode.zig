@@ -100,6 +100,7 @@ pub fn extactMatchName(self: *const TrieNode, n: usize) []const u8 {
 
 fn find(len: usize, comptime T: type, context: T) !usize {
     var bottom: usize = 0;
+    if (len == 0) return error.NotFound;
     var top: usize = len - 1;
     while (top >= bottom) {
         const search = (top + bottom) / 2;

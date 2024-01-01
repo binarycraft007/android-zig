@@ -9,13 +9,13 @@ test "basic functionality" {
     });
     defer prop.deinit();
     const pi = try prop.find(.{
-        .name = "ro.product.locale",
+        .name = "ro.build.version.sdk",
         .allocator = testing.allocator,
     });
     defer pi.deinit();
     try testing.expectEqualSlices(
         u8,
-        "en-US",
+        "34",
         pi.value(), // long_value is supported
     );
 }
