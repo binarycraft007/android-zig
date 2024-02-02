@@ -1,21 +1,38 @@
 const std = @import("std");
+const mem = std.mem;
 const testing = std.testing;
 pub const Property = @import("Property.zig");
 
-test "basic functionality" {
-    var prop = try Property.init(.{
-        .path = "testdata/dev/__properties__",
-        .allocator = testing.allocator,
-    });
+pub const ApiLevel = enum(u16) {
+    gingerbread = 9,
+    ice_Cream_sandwich = 14,
+    jellybean = 16,
+    jellybean_mr1,
+    jellybean_mr2,
+    kitkat,
+    lollipop = 21,
+    lollipop_mr1,
+    marshmallow,
+    nougat,
+    nougat_mr1,
+    oreo,
+    oreo_mr1,
+    pie,
+    quince_tart, // android 10
+    red_velvet_cake, // android 11
+    snowcone, // android 12
+    tiramisu = 33, // android 13
+    upside_down_cake, // android 14
+};
+
+pub fn getApiLevel(allocator: mem.Allocator) !ApiLevel {
+    var prop = try Property.init(.{ .allocator = allocator });
     defer prop.deinit();
     const pi = try prop.find(.{
         .name = "ro.build.version.sdk",
-        .allocator = testing.allocator,
+        .allocator = allocator,
     });
     defer pi.deinit();
-    try testing.expectEqualSlices(
-        u8,
-        "34",
-        pi.value(), // long_value is supported
-    );
+    const level = try std.fmt.parseInt(u16, pi.value(), 10);
+    return @enumFromInt(level);
 }

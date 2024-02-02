@@ -2,13 +2,13 @@ const std = @import("std");
 const posix = std.os;
 const fs = std.fs;
 const mem = std.mem;
-const android = @import("android.zig");
-const PropArea = @import("PropArea.zig");
-const PropInfo = @import("PropInfo.zig");
-const ContextNode = @import("ContextNode.zig");
-const InfoHeader = android.InfoHeader;
-const InfoContext = @import("InfoContext.zig");
-const PropTrieNode = @import("PropTrieNode.zig");
+const common = @import("Property/common.zig");
+const PropArea = @import("Property/PropArea.zig");
+const PropInfo = @import("Property/PropInfo.zig");
+const ContextNode = @import("Property/ContextNode.zig");
+const InfoHeader = common.InfoHeader;
+const InfoContext = @import("Property/InfoContext.zig");
+const PropTrieNode = @import("Property/PropTrieNode.zig");
 const Property = @This();
 
 const prop_tree_root = "/dev/__properties__";
@@ -23,7 +23,7 @@ pub const InitOptions = struct {
 };
 
 pub fn init(options: InitOptions) !Property {
-    var buf: [512]u8 = undefined;
+    var buf: [512]u8 = [1]u8{0} ** 512;
     var fba = std.heap.FixedBufferAllocator.init(&buf);
     const allocator = fba.allocator();
     const tree = try std.fs.path.join(allocator, &.{
@@ -59,6 +59,10 @@ pub const FindOptions = struct {
 };
 
 pub fn find(self: *Property, options: FindOptions) !PropInfo {
+    // only supports read only property
+    if (!mem.startsWith(u8, options.name, "ro.")) {
+        return error.UnsupportedPropertyType;
+    }
     const node = try self.getPropArea(options);
     const trie = node.rootNode();
     var current: PropTrieNode = trie;
