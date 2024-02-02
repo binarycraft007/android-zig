@@ -1,6 +1,7 @@
 const std = @import("std");
 const mem = std.mem;
 const testing = std.testing;
+pub const DynLib = @import("DynLib.zig");
 pub const Property = @import("Property.zig");
 
 pub const ApiLevel = enum(u16) {
