@@ -45,6 +45,9 @@ symtab_cnt: usize,
 strtab: [][]const u8, // .strtab
 strtab_sz: usize,
 
+pub const APP_PROCESS_BASENAME = "app_process64";
+pub const APP_PROCESS_PATHNAME = "/system/bin/app_process64";
+
 pub const OpenFlags = enum {
     default,
     always_force,
@@ -52,9 +55,8 @@ pub const OpenFlags = enum {
 };
 
 pub fn open(path: []const u8, flags: OpenFlags) !DynLib {
-    _ = path;
     switch (flags) {
-        .default => {},
+        .default => try find(path),
         .always_force => {},
         .try_force => {},
     }
@@ -64,7 +66,23 @@ pub fn close(self: *DynLib) void {
     _ = self;
 }
 
+fn find(path: []const u8) !DynLib {
+    if (mem.endsWith(u8, path, Linker.basename)) {} else {}
+}
+
+fn findFromAuxv(at_type: c_ulong, path: []const u8) !DynLib {
+    const val = os.linux.getauxval(at_type);
+    if (val == 0) return error.GetAuxVal;
+    const base = if (at_type == elf.AT_PHDR) val & ~0xfff else val;
+    var base_ptr: [*]u8 = @ptrFromInt(base);
+    const eh = try elf.Header.parse(base_ptr[0..@sizeOf(elf.Elf64_Ehdr)]);
+    if (eh.e_type != elf.ET.DYN) return error.NotDynamicLibrary;
+    return .{ .pathname = path };
+}
+
 const std = @import("std");
+const os = std.os;
 const elf = std.elf;
+const mem = std.mem;
 const DynLib = @This();
 const Linker = @import("DynLib/Linker.zig");
