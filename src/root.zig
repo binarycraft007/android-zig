@@ -5,7 +5,7 @@ pub const Property = @import("Property.zig");
 
 pub const ApiLevel = enum(u16) {
     gingerbread = 9,
-    ice_Cream_sandwich = 14,
+    ice_cream_sandwich = 14,
     jellybean = 16,
     jellybean_mr1,
     jellybean_mr2,
