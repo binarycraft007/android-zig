@@ -19,6 +19,10 @@ pub const Kind = enum {
     vendor,
 };
 
+const boot_image_header_v3_pagesize = 4096;
+const vendor_ramdisk_name_size = 32;
+const vendor_ramdisk_table_entry_board_id_size = 16;
+
 pub const ReadError = os.ReadError;
 pub const WriteError = os.WriteError;
 pub const Reader = io.Reader(BootImage, ReadError, read);
@@ -64,15 +68,36 @@ pub fn unpack(path: []const u8) !BootImage {
 }
 
 fn unpackBootImage(self: *BootImage) !void {
+    var os_version_patch_level: ?u32 = null;
     const buffer = try self.reader().readBytesNoEof(9 * 4);
     self.info.header_version = @bitCast(buffer[buffer.len - 4 ..].*);
+    defer {
+        if (os_version_patch_level) |v| {
+            self.info.os_version = v >> 11;
+            self.info.os_patch_level = v & ((1 << 11) - 1);
+        }
+    }
     if (self.info.header_version < 3) {
         self.info.kernel_size = @bitCast(buffer[0..4].*);
         self.info.kernel_load_address = @bitCast(buffer[4..8].*);
         self.info.ramdisk_size = @bitCast(buffer[8..12].*);
         self.info.ramdisk_load_address = @bitCast(buffer[12..16].*);
+        self.info.second_size = @bitCast(buffer[16..20].*);
+        self.info.second_load_address = @bitCast(buffer[20..24].*);
+        self.info.tags_load_address = @bitCast(buffer[20..24].*);
+        self.info.page_size = @bitCast(buffer[24..28].*);
+        os_version_patch_level = try self.reader().readInt(
+            u32,
+            native_endian,
+        );
     } else {
         self.info.kernel_size = @bitCast(buffer[0..4].*);
+        self.info.ramdisk_size = @bitCast(buffer[4..8].*);
+        os_version_patch_level = try self.reader().readInt(
+            u32,
+            native_endian,
+        );
+        self.info.page_size = boot_image_header_v3_pagesize;
     }
 }
 
