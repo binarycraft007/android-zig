@@ -240,16 +240,13 @@ pub fn lookupAddressGnu(self: *const ElfDynLib, vername: []const u8, name: []con
         return null;
     }
 
-    while (true) : (i += 1) {
+    var hash: u32 = 0;
+    while ((hash & 1) == 0) : (i += 1) {
         const symname = mem.sliceTo(self.strings + self.syms[i].st_name, 0);
-        const hash = chain[i - symoffset];
+        hash = chain[i - symoffset];
 
         if ((namehash | 1) == (hash | 1) and mem.eql(u8, name, symname)) {
             return @intFromPtr(self.memory.ptr) + self.syms[i].st_value;
-        }
-
-        if ((hash & 1) > 0) {
-            break;
         }
     }
 
