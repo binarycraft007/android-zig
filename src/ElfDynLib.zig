@@ -5,22 +5,9 @@ versym: ?[*]u16,
 verdef: ?*elf.Verdef,
 memory: []align(mem.page_size) u8,
 
-const HashTable = union(enum) {
-    sysv: struct {
-        nbucket: u32,
-        nchain: u32,
-        bucket: []const u32,
-        chain: []const u32,
-    },
-    gnu: struct {
-        nbuckets: u32,
-        symoffset: u32,
-        bloom_size: u32,
-        bloom_shift: u32,
-        bloom: []const elf.Addr, // u32 for 32-bit binaries */
-        buckets: []const u32,
-        chain: [*]u32,
-    },
+pub const HashTable = union(enum) {
+    sysv: [*]os.Elf_Symndx,
+    gnu: [*]os.Elf_Symndx,
 };
 
 pub const Error = error{
@@ -151,41 +138,8 @@ pub fn open(path: []const u8) !ElfDynLib {
             switch (dynv[i]) {
                 elf.DT_STRTAB => maybe_strings = @as([*:0]u8, @ptrFromInt(p)),
                 elf.DT_SYMTAB => maybe_syms = @as([*]elf.Sym, @ptrFromInt(p)),
-                elf.DT_HASH => {
-                    const ptr: [*]os.Elf_Symndx = @ptrFromInt(p);
-                    const nbucket = ptr[0];
-                    const nchain = ptr[1];
-                    maybe_hashtab = .{
-                        .sysv = .{
-                            .nbucket = nbucket,
-                            .nchain = nchain,
-                            .bucket = ptr[2 .. nbucket + 2],
-                            .chain = ptr[nbucket + 3 .. nchain + nbucket + 3],
-                        },
-                    };
-                },
-                elf.DT_GNU_HASH => {
-                    const ptr: [*]os.Elf_Symndx = @ptrFromInt(p);
-                    const nbuckets = ptr[0];
-                    const symoffset = ptr[1];
-                    const bloom_size = ptr[2];
-                    const bloom_shift = ptr[3];
-                    const bloom: [*]elf.Addr = @ptrCast(@alignCast(&ptr[4]));
-                    const buckets: [*]u32 = @ptrCast(&bloom[bloom_size]);
-                    const chain: [*]u32 = @ptrCast(&buckets[nbuckets]);
-
-                    maybe_hashtab = .{
-                        .gnu = .{
-                            .nbuckets = nbuckets,
-                            .symoffset = symoffset,
-                            .bloom_size = bloom_size,
-                            .bloom_shift = bloom_shift,
-                            .bloom = bloom[0..bloom_size],
-                            .buckets = buckets[0..nbuckets],
-                            .chain = chain,
-                        },
-                    };
-                },
+                elf.DT_HASH => maybe_hashtab = .{ .sysv = @ptrFromInt(p) },
+                elf.DT_GNU_HASH => maybe_hashtab = .{ .gnu = @ptrFromInt(p) },
                 elf.DT_VERSYM => maybe_versym = @as([*]u16, @ptrFromInt(p)),
                 elf.DT_VERDEF => maybe_verdef = @as(*elf.Verdef, @ptrFromInt(p)),
                 else => {},
@@ -230,12 +184,23 @@ pub fn lookupAddress(self: *const ElfDynLib, vername: []const u8, name: []const 
     }
 }
 
-fn lookupAddressSysv(self: *const ElfDynLib, vername: []const u8, name: []const u8) ?usize {
+pub fn lookupAddressSysv(self: *const ElfDynLib, vername: []const u8, name: []const u8) ?usize {
     const maybe_versym = if (self.verdef == null) null else self.versym;
 
+    const OK_TYPES = (1 << elf.STT_NOTYPE | 1 << elf.STT_OBJECT | 1 << elf.STT_FUNC | 1 << elf.STT_COMMON);
+    const OK_BINDS = (1 << elf.STB_GLOBAL | 1 << elf.STB_WEAK | 1 << elf.STB_GNU_UNIQUE);
+
     const hash = sysvHash(name);
-    var i: usize = self.hashtab.sysv.bucket[hash % self.hashtab.sysv.nbucket];
-    while (i != 0) : (i = self.hashtab.sysv.chain[i]) {
+    const nbucket = self.hashtab.sysv[0];
+    const nchain = self.hashtab.sysv[1];
+    const bucket: [*]u32 = @ptrCast(&self.hashtab.sysv[2]);
+    const chain_ptr: [*]u32 = @ptrCast(&bucket[nbucket]);
+    const chain: []u32 = chain_ptr[0..nchain];
+
+    var i: usize = bucket[hash % nbucket];
+    while (i > 0) : (i = chain[i]) {
+        if (0 == (@as(u32, 1) << @as(u5, @intCast(self.syms[i].st_info & 0xf)) & OK_TYPES)) continue;
+        if (0 == (@as(u32, 1) << @as(u5, @intCast(self.syms[i].st_info >> 4)) & OK_BINDS)) continue;
         if (0 == self.syms[i].st_shndx) continue;
         if (!mem.eql(u8, name, mem.sliceTo(self.strings + self.syms[i].st_name, 0))) continue;
         if (maybe_versym) |versym| {
@@ -244,35 +209,50 @@ fn lookupAddressSysv(self: *const ElfDynLib, vername: []const u8, name: []const 
         }
         return @intFromPtr(self.memory.ptr) + self.syms[i].st_value;
     }
+
     return null;
 }
 
-fn lookupAddressGnu(self: *const ElfDynLib, vername: []const u8, name: []const u8) ?usize {
-    const maybe_versym = if (self.verdef == null) null else self.versym;
+pub fn lookupAddressGnu(self: *const ElfDynLib, vername: []const u8, name: []const u8) ?usize {
+    _ = vername;
 
-    const hash = gnuHash(name);
+    const namehash = gnuHash(name);
+    const nbuckets = self.hashtab.gnu[0];
+    const symoffset = self.hashtab.gnu[1];
+    const bloom_size = self.hashtab.gnu[2];
+    const bloom_shift = self.hashtab.gnu[3];
+    const bloom: [*]elf.Addr = @ptrCast(@alignCast(&self.hashtab.gnu[4]));
+    const buckets: [*]u32 = @ptrCast(&bloom[bloom_size]);
+    const chain: [*]u32 = @ptrCast(&buckets[nbuckets]);
     const elf_class_bits = @bitSizeOf(elf.Addr);
-    const hashtable = self.hashtab.gnu;
 
-    const word: elf.Addr = hashtable.bloom[(hash / elf_class_bits) % hashtable.bloom_size];
+    const word = bloom[(namehash / elf_class_bits) % bloom_size];
     const mask = 0 |
-        @as(elf.Addr, 1) << @intCast(hash % elf_class_bits) |
-        @as(elf.Addr, 1) << @intCast((hash >> @intCast(hashtable.bloom_shift)) % elf_class_bits);
-    if ((word & mask) != mask) return null;
-    var i: usize = hashtable.buckets[hash % hashtable.nbuckets];
-    if (i < hashtable.symoffset) return null;
+        @as(elf.Addr, 1) << @intCast(namehash % elf_class_bits) |
+        @as(elf.Addr, 1) << @intCast((namehash >> @intCast(bloom_shift)) % elf_class_bits);
+
+    if ((word & mask) != mask) {
+        return null;
+    }
+
+    var i: usize = buckets[namehash % nbuckets];
+    if (i < symoffset) {
+        return null;
+    }
+
     while (true) : (i += 1) {
-        const sym_name = mem.sliceTo(self.strings + self.syms[i].st_name, 0);
-        const chain_hash = hashtable.chain[i - hashtable.symoffset];
-        if (maybe_versym) |versym| {
-            if (!checkver(self.verdef.?, versym[i], vername, self.strings))
-                continue;
-        }
-        if ((hash | 1) == (chain_hash | 1) and mem.eql(u8, name, sym_name)) {
+        const symname = mem.sliceTo(self.strings + self.syms[i].st_name, 0);
+        const hash = chain[i - symoffset];
+
+        if ((namehash | 1) == (hash | 1) and mem.eql(u8, name, symname)) {
             return @intFromPtr(self.memory.ptr) + self.syms[i].st_value;
         }
-        if ((chain_hash | 1) > 0) break;
+
+        if ((hash & 1) > 0) {
+            break;
+        }
     }
+
     return null;
 }
 
@@ -312,17 +292,30 @@ fn sysvHash(name: []const u8) usize {
 }
 
 fn gnuHash(name: []const u8) usize {
-    var h: usize = 5381;
+    var h: u32 = 5381;
 
     for (name) |c| {
-        h = (h << 5) + h + c;
+        h = (h << 5) +% h + c;
     }
 
     return h;
+}
+
+test "hash functions" {
+    try testing.expectEqual(sysvHash(""), 0x00000000);
+    try testing.expectEqual(sysvHash("printf"), 0x077905a6);
+    try testing.expectEqual(sysvHash("exit"), 0x0006cf04);
+    try testing.expectEqual(sysvHash("syscall"), 0x0b09985c);
+
+    try testing.expectEqual(gnuHash(""), 0x00001505);
+    try testing.expectEqual(gnuHash("printf"), 0x156b2bb8);
+    try testing.expectEqual(gnuHash("exit"), 0x7c967e3f);
+    try testing.expectEqual(gnuHash("syscall"), 0xbac212a0);
 }
 
 const std = @import("std");
 const os = std.os;
 const elf = std.elf;
 const mem = std.mem;
+const testing = std.testing;
 const ElfDynLib = @This();
