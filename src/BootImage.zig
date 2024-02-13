@@ -1,12 +1,28 @@
 file: std.fs.File,
 header: Header,
+page_size: usize = 0,
+image_infos: ImageInfos = .{},
+
+pub const ImageInfo = struct {
+    offset: usize = 0,
+    size: usize = 0,
+};
+
+pub const ImageInfos = struct {
+    kernel: ImageInfo = .{},
+    ramdisk: ImageInfo = .{},
+    second: ImageInfo = .{},
+    recovery_dtbo: ImageInfo = .{},
+    dtb: ImageInfo = .{},
+    boot_signature: ImageInfo = .{},
+};
 
 pub const boot_magic = "ANDROID!";
 pub const boot_magic_size = 8;
 pub const boot_name_size = 16;
 pub const boot_args_size = 512;
 pub const boot_extra_args_size = 1024;
-pub const boot_image_header_v3_pagesize = 4096;
+pub const boot_image_pagesize = 4096;
 pub const vendor_boot_magic = "VNDRBOOT";
 pub const vendor_boot_magic_size = 8;
 pub const vendor_boot_args_size = 2048;
@@ -267,13 +283,89 @@ pub fn unpack(path: []const u8) !BootImage {
 }
 
 fn unpackBootImage(self: *BootImage) !void {
+    // The first page contains the boot header
+    const header_pages: usize = 1;
     switch (self.header) {
         inline else => |*value, tag| {
             const T = std.meta.TagPayload(Header, tag);
             try self.file.seekTo(0);
             value.* = try self.reader().readStruct(T);
+            if (@hasField(T, "page_size")) {
+                self.page_size = value.page_size;
+            } else {
+                self.page_size = boot_image_pagesize;
+            }
+            const kernel_pages = pageNumber(value, .kernel_size);
+            const ramdisk_pages = pageNumber(value, .ramdisk_size);
+            self.image_infos.kernel = .{
+                .offset = self.page_size * header_pages,
+                .size = value.kernel_size,
+            };
+            self.image_infos.ramdisk = .{
+                .offset = self.page_size * (header_pages + kernel_pages),
+                .size = value.ramdisk_size,
+            };
+            if (@hasField(T, "second_size")) {
+                self.image_infos.second = .{
+                    .offset = self.page_size *
+                        (header_pages + kernel_pages + ramdisk_pages),
+                    .size = value.ramdisk_size,
+                };
+            }
+            if (@hasField(T, "recovery_dtbo_size")) {
+                self.image_infos.recovery_dtbo = .{
+                    .offset = value.recovery_dtbo_offset,
+                    .size = value.recovery_dtbo_size,
+                };
+            }
+            if (@hasField(T, "dtb_size")) {
+                self.image_infos.recovery_dtbo = .{
+                    .offset = self.page_size *
+                        ((header_pages + kernel_pages + ramdisk_pages) +
+                        pageNumber(value, .second_size) +
+                        pageNumber(value, .recovery_dtbo_size)),
+                    .size = value.dtb_size,
+                };
+            }
+            if (@hasField(T, "boot_signature_size")) {
+                self.image_infos.boot_signature = .{
+                    .offset = self.page_size *
+                        (header_pages + kernel_pages + ramdisk_pages),
+                    .size = value.boot_signature_size,
+                };
+            }
         },
     }
+    inline for (@typeInfo(ImageInfos).Struct.fields) |field| {
+        const image_info = @field(self.image_infos, field.name);
+        if (image_info.offset != 0 and image_info.size != 0) {
+            try self.file.seekTo(image_info.offset);
+            var buffer: [4096]u8 = undefined;
+            var index: usize = 0;
+            var file = try std.fs.cwd().createFile(field.name, .{});
+            defer file.close();
+            while (index < image_info.size) {
+                const amt = try self.read(&buffer);
+                if (amt == 0) break;
+                index += amt;
+                const len = if (index > image_info.size)
+                    amt - (index - image_info.size)
+                else
+                    amt;
+                try file.writeAll(buffer[0..len]);
+            }
+        }
+    }
+}
+
+fn pageNumber(header: anytype, comptime tag: @TypeOf(.EnumLiteral)) usize {
+    // calculates the number of pages required for the image
+    const page_size = if (@hasField(@TypeOf(header.*), "page_size"))
+        header.page_size
+    else
+        boot_image_pagesize;
+    const image_size = @field(header, @tagName(tag));
+    return (image_size + page_size - 1) / page_size;
 }
 
 test {
