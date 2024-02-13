@@ -6,6 +6,10 @@ image_infos: ImageInfos = .{},
 pub const ImageInfo = struct {
     offset: usize = 0,
     size: usize = 0,
+
+    pub fn nextAligned(self: ImageInfo, alignment: usize) usize {
+        return mem.alignForward(usize, self.offset + self.size, alignment);
+    }
 };
 
 pub const ImageInfos = struct {
@@ -14,7 +18,7 @@ pub const ImageInfos = struct {
     second: ImageInfo = .{},
     recovery_dtbo: ImageInfo = .{},
     dtb: ImageInfo = .{},
-    boot_signature: ImageInfo = .{},
+    signature: ImageInfo = .{},
 };
 
 pub const boot_magic = "ANDROID!";
@@ -286,7 +290,7 @@ fn unpackBootImage(self: *BootImage) !void {
     // The first page contains the boot header
     const header_pages: usize = 1;
     switch (self.header) {
-        inline else => |*value, tag| {
+        inline .v3, .v4 => |*value, tag| {
             const T = std.meta.TagPayload(Header, tag);
             try self.file.seekTo(0);
             value.* = try self.reader().readStruct(T);
@@ -295,46 +299,22 @@ fn unpackBootImage(self: *BootImage) !void {
             } else {
                 self.page_size = boot_image_pagesize;
             }
-            const kernel_pages = pageNumber(value, .kernel_size);
-            const ramdisk_pages = pageNumber(value, .ramdisk_size);
             self.image_infos.kernel = .{
                 .offset = self.page_size * header_pages,
                 .size = value.kernel_size,
             };
             self.image_infos.ramdisk = .{
-                .offset = self.page_size * (header_pages + kernel_pages),
+                .offset = self.image_infos.kernel.nextAligned(self.page_size),
                 .size = value.ramdisk_size,
             };
-            if (@hasField(T, "second_size")) {
-                self.image_infos.second = .{
-                    .offset = self.page_size *
-                        (header_pages + kernel_pages + ramdisk_pages),
-                    .size = value.ramdisk_size,
-                };
-            }
-            if (@hasField(T, "recovery_dtbo_size")) {
-                self.image_infos.recovery_dtbo = .{
-                    .offset = value.recovery_dtbo_offset,
-                    .size = value.recovery_dtbo_size,
-                };
-            }
-            if (@hasField(T, "dtb_size")) {
-                self.image_infos.recovery_dtbo = .{
-                    .offset = self.page_size *
-                        ((header_pages + kernel_pages + ramdisk_pages) +
-                        pageNumber(value, .second_size) +
-                        pageNumber(value, .recovery_dtbo_size)),
-                    .size = value.dtb_size,
-                };
-            }
-            if (@hasField(T, "boot_signature_size")) {
-                self.image_infos.boot_signature = .{
-                    .offset = self.page_size *
-                        (header_pages + kernel_pages + ramdisk_pages),
-                    .size = value.boot_signature_size,
+            if (@hasField(T, "signature_size")) {
+                self.image_infos.signature = .{
+                    .offset = self.image_infos.ramdisk.nextAligned(self.page_size),
+                    .size = value.signature_size,
                 };
             }
         },
+        inline else => return error.Unsupported,
     }
     inline for (@typeInfo(ImageInfos).Struct.fields) |field| {
         const image_info = @field(self.image_infos, field.name);
@@ -356,16 +336,6 @@ fn unpackBootImage(self: *BootImage) !void {
             }
         }
     }
-}
-
-fn pageNumber(header: anytype, comptime tag: @TypeOf(.EnumLiteral)) usize {
-    // calculates the number of pages required for the image
-    const page_size = if (@hasField(@TypeOf(header.*), "page_size"))
-        header.page_size
-    else
-        boot_image_pagesize;
-    const image_size = @field(header, @tagName(tag));
-    return (image_size + page_size - 1) / page_size;
 }
 
 test {
