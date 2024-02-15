@@ -1,23 +1,20 @@
 file: std.fs.File,
 header: Header,
-page_size: usize = 0,
 image_infos: ImageInfos = .{},
 
 pub const ImageInfo = struct {
     offset: usize = 0,
     size: usize = 0,
 
-    pub fn nextAligned(self: ImageInfo, alignment: usize) usize {
-        return mem.alignForward(usize, self.offset + self.size, alignment);
+    pub fn nextAligned(self: ImageInfo) usize {
+        const page_size = boot_image_pagesize;
+        return mem.alignForward(usize, self.offset + self.size, page_size);
     }
 };
 
 pub const ImageInfos = struct {
     kernel: ImageInfo = .{},
     ramdisk: ImageInfo = .{},
-    second: ImageInfo = .{},
-    recovery_dtbo: ImageInfo = .{},
-    dtb: ImageInfo = .{},
     signature: ImageInfo = .{},
 };
 
@@ -38,34 +35,6 @@ pub const vendor_ramdisk_type_dlkm = 3;
 pub const vendor_ramdisk_name_size = 32;
 pub const vendor_ramdisk_table_entry_board_id_size = 16;
 
-// When a boot header is of version 0, the structure of
-// boot image is as follows:
-//
-// +-----------------+
-// | boot header     | 1 page
-// +-----------------+
-// | kernel          | n pages
-// +-----------------+
-// | ramdisk         | m pages
-// +-----------------+
-// | second stage    | o pages
-// +-----------------+
-//
-// n = (kernel_size + page_size - 1) / page_size
-// m = (ramdisk_size + page_size - 1) / page_size
-// o = (second_size + page_size - 1) / page_size
-//
-// 0. all entities are page_size aligned in flash
-// 1. kernel and ramdisk are required (size != 0)
-// 2. second is optional (second_size == 0 -> no second)
-// 3. load each element (kernel, ramdisk, second) at
-//    the specified physical address (kernel_addr, etc)
-// 4. prepare tags at tag_addr.  kernel_args[] is
-//    appended to the kernel commandline in the tags.
-// 5. r0 = 0, r1 = MACHINE_TYPE, r2 = tags_addr
-// 6. if second_size != 0: jump to second_addr
-//    else: jump to kernel_addr
-
 pub const HeaderVersion = enum {
     v0,
     v1,
@@ -75,159 +44,42 @@ pub const HeaderVersion = enum {
 };
 
 pub const Header = union(HeaderVersion) {
-    v0: extern struct {
-        // Must be BOOT_MAGIC.
-        magic: [boot_magic_size]u8 align(1),
-        kernel_size: u32 align(1), // size in bytes
-        kernel_addr: u32 align(1), // physical load addr
-        ramdisk_size: u32 align(1), // size in bytes
-        ramdisk_addr: u32 align(1), // physical load addr
-        second_size: u32 align(1), // size in bytes
-        second_addr: u32 align(1), // physical load addr
-        tags_addr: u32 align(1), // physical addr for kernel tags (if required)
-        page_size: u32 align(1), // flash page size we assume
-        // Version of the boot image header.
-        header_version: u32 align(1),
-        // Operating system version and security patch level.
-        // For version "A.B.C" and patch level "Y-M-D":
-        //   (7 bits for each of A, B, C; 7 bits for (Y-2000), 4 bits for M)
-        //   os_version = A[31:25] B[24:18] C[17:11] (Y-2000)[10:4] M[3:0]
-        os_version: u32 align(1),
-        name: [boot_name_size]u8 align(1), // asciiz product name
-        cmdline: [boot_args_size]u8 align(1), // asciiz kernel commandline
-        id: [8]u32 align(1), // timestamp / checksum / sha1 / etc
-        // Supplemental command line data; kept here to maintain
-        // binary compatibility with older versions of mkbootimg.
-        // Asciiz.
-        extra_cmdline: [boot_extra_args_size]u8 align(1),
-    },
-    v1: extern struct {
-        // Must be BOOT_MAGIC.
-        magic: [boot_magic_size]u8 align(1),
-        kernel_size: u32 align(1), // size in bytes
-        kernel_addr: u32 align(1), // physical load addr
-        ramdisk_size: u32 align(1), // size in bytes
-        ramdisk_addr: u32 align(1), // physical load addr
-        second_size: u32 align(1), // size in bytes
-        second_addr: u32 align(1), // physical load addr
-        tags_addr: u32 align(1), // physical addr for kernel tags (if required)
-        page_size: u32 align(1), // flash page size we assume
-        // Version of the boot image header.
-        header_version: u32 align(1),
-        // Operating system version and security patch level.
-        // For version "A.B.C" and patch level "Y-M-D":
-        //   (7 bits for each of A, B, C; 7 bits for (Y-2000), 4 bits for M)
-        //   os_version = A[31:25] B[24:18] C[17:11] (Y-2000)[10:4] M[3:0]
-        os_version: u32 align(1),
-        name: [boot_name_size]u8 align(1), // asciiz product name
-        cmdline: [boot_args_size]u8 align(1), // asciiz kernel commandline
-        id: [8]u32 align(1), // timestamp / checksum / sha1 / etc
-        // Supplemental command line data; kept here to maintain
-        // binary compatibility with older versions of mkbootimg.
-        // Asciiz.
-        extra_cmdline: [boot_extra_args_size]u8 align(1),
-        recovery_dtbo_size: u32 align(1), // size in bytes for recovery DTBO/ACPIO image
-        recovery_dtbo_offset: u64 align(1), // offset to recovery dtbo/acpio in boot image
-        header_size: u32 align(1),
-    },
-    v2: extern struct {
-        // Must be BOOT_MAGIC.
-        magic: [boot_magic_size]u8 align(1),
-        kernel_size: u32 align(1), // size in bytes
-        kernel_addr: u32 align(1), // physical load addr
-        ramdisk_size: u32 align(1), // size in bytes
-        ramdisk_addr: u32 align(1), // physical load addr
-        second_size: u32 align(1), // size in bytes
-        second_addr: u32 align(1), // physical load addr
-        tags_addr: u32 align(1), // physical addr for kernel tags (if required)
-        page_size: u32 align(1), // flash page size we assume
-        // Version of the boot image header.
-        header_version: u32 align(1),
-        // Operating system version and security patch level.
-        // For version "A.B.C" and patch level "Y-M-D":
-        //   (7 bits for each of A, B, C; 7 bits for (Y-2000), 4 bits for M)
-        //   os_version = A[31:25] B[24:18] C[17:11] (Y-2000)[10:4] M[3:0]
-        os_version: u32 align(1),
-        name: [boot_name_size]u8 align(1), // asciiz product name
-        cmdline: [boot_args_size]u8 align(1), // asciiz kernel commandline
-        id: [8]u32 align(1), // timestamp / checksum / sha1 / etc
-        // Supplemental command line data; kept here to maintain
-        // binary compatibility with older versions of mkbootimg.
-        // Asciiz.
-        extra_cmdline: [boot_extra_args_size]u8 align(1),
-        recovery_dtbo_size: u32 align(1), // size in bytes for recovery DTBO/ACPIO image
-        recovery_dtbo_offset: u64 align(1), // offset to recovery dtbo/acpio in boot image
-        header_size: u32 align(1),
-        dtb_size: u32 align(1), // size in bytes for DTB image
-        dtb_addr: u64 align(1), // physical load address for DTB image
-    },
+    v0: extern struct { magic: [boot_magic_size]u8 align(1) },
+    v1: extern struct { magic: [boot_magic_size]u8 align(1) },
+    v2: extern struct { magic: [boot_magic_size]u8 align(1) },
     v3: extern struct {
-        // Must be BOOT_MAGIC.
         magic: [boot_magic_size]u8 align(1),
-        kernel_size: u32 align(1), // size in bytes */
-        ramdisk_size: u32 align(1), // size in bytes */
-        // Operating system version and security patch level.
-        // For version "A.B.C" and patch level "Y-M-D":
-        //   (7 bits for each of A, B, C; 7 bits for (Y-2000), 4 bits for M)
-        //   os_version = A[31:25] B[24:18] C[17:11] (Y-2000)[10:4] M[3:0]
-        os_version: u32 align(1),
+        kernel_size: u32 align(1),
+        ramdisk_size: u32 align(1),
+        os_version: packed struct {
+            month: u4,
+            year: u7,
+            patch: u7,
+            minor: u7,
+            major: u7,
+        } align(1),
         header_size: u32 align(1),
         reserved: [4]u32 align(1),
-        // Version of the boot image header.
         header_version: u32 align(1),
-        // Asciiz kernel commandline.
         cmdline: [boot_args_size + boot_extra_args_size]u8 align(1),
     },
     v4: extern struct {
-        // Must be BOOT_MAGIC.
         magic: [boot_magic_size]u8 align(1),
-        kernel_size: u32 align(1), // size in bytes */
-        ramdisk_size: u32 align(1), // size in bytes */
-        // Operating system version and security patch level.
-        // For version "A.B.C" and patch level "Y-M-D":
-        //   (7 bits for each of A, B, C; 7 bits for (Y-2000), 4 bits for M)
-        //   os_version = A[31:25] B[24:18] C[17:11] (Y-2000)[10:4] M[3:0]
-        os_version: u32 align(1),
+        kernel_size: u32 align(1),
+        ramdisk_size: u32 align(1),
+        os_version: packed struct {
+            month: u4,
+            year: u7,
+            patch: u7,
+            minor: u7,
+            major: u7,
+        } align(1),
         header_size: u32 align(1),
         reserved: [4]u32 align(1),
-        // Version of the boot image header.
         header_version: u32 align(1),
-        // Asciiz kernel commandline.
         cmdline: [boot_args_size + boot_extra_args_size]u8 align(1),
-        signature_size: u32 align(1), // size in bytes
+        signature_size: u32 align(1),
     },
-
-    pub const SetOsVersionOptions = struct {
-        major: u32,
-        minor: u32,
-        patch: u32,
-    };
-
-    pub fn setOsVersion(self: *Header, options: SetOsVersionOptions) void {
-        switch (self.*) {
-            inline else => |*value| {
-                value.os_version &= ((1 << 11) - 1);
-                value.os_version |= ((options.major & 0x7f) << 25) |
-                    ((options.minor & 0x7f) << 18) |
-                    ((options.patch & 0x7f) << 11);
-            },
-        }
-    }
-
-    pub const SetOsPatchLevelOptions = struct {
-        year: u32,
-        month: u32,
-    };
-
-    pub fn setOsPatchLevel(self: *Header, options: SetOsPatchLevelOptions) void {
-        switch (self.*) {
-            inline else => |*value| {
-                value.os_version &= ~((1 << 11) - 1);
-                value.os_version |= (((options.year - 2000) & 0x7f) << 4) |
-                    ((options.month & 0xf) << 0);
-            },
-        }
-    }
 };
 
 pub const ReadError = os.ReadError;
@@ -261,15 +113,7 @@ pub fn unpack(path: []const u8) !BootImage {
         const header_version_raw = try file.reader().readBytesNoEof(4);
         const header_version: u32 = @bitCast(header_version_raw);
         switch (@as(HeaderVersion, @enumFromInt(header_version))) {
-            .v0 => {
-                image = .{ .file = file, .header = .{ .v0 = undefined } };
-            },
-            .v1 => {
-                image = .{ .file = file, .header = .{ .v1 = undefined } };
-            },
-            .v2 => {
-                image = .{ .file = file, .header = .{ .v2 = undefined } };
-            },
+            .v0, .v1, .v2 => return error.UnsupportedBootImageVersion,
             .v3 => {
                 image = .{ .file = file, .header = .{ .v3 = undefined } };
             },
@@ -286,54 +130,116 @@ pub fn unpack(path: []const u8) !BootImage {
     return image;
 }
 
+pub fn repack(self: *BootImage) !void {
+    var file = try std.fs.cwd().createFile("new_boot.img", .{});
+    defer file.close();
+    inline for (@typeInfo(ImageInfos).Struct.fields) |field| {
+        const image_info = @field(self.image_infos, field.name);
+        if (image_info.offset != 0 and image_info.size != 0) {
+            const stat = try std.fs.cwd().statFile(field.name);
+            switch (self.header) {
+                inline .v3, .v4 => |*value| {
+                    const field_name = field.name ++ "_size";
+                    if (@hasField(@TypeOf(value.*), field_name)) {
+                        @field(value, field_name) = @intCast(stat.size);
+                        try file.writer().writeStruct(value.*);
+                    }
+                },
+                else => return error.UnsupportedBootImageVersion,
+            }
+        }
+    }
+    try padFile(file);
+    inline for (@typeInfo(ImageInfos).Struct.fields) |field| {
+        const image_info = @field(self.image_infos, field.name);
+        if (image_info.offset != 0 and image_info.size != 0) {
+            const img = try std.fs.cwd().openFile(field.name, .{});
+            defer img.close();
+            var pumper: Pumper = Pumper.init();
+            try pumper.pump(img.reader(), file.writer());
+            try padFile(file);
+        }
+    }
+}
+
+fn padFile(file: std.fs.File) !void {
+    const pos = try file.getPos();
+    const padding = boot_image_pagesize;
+    var buffer: [boot_image_pagesize]u8 = undefined;
+    const pad = (padding - (pos & (padding - 1))) & (padding - 1);
+    @memset(buffer[0..pad], 'x');
+    try file.writer().writeAll(buffer[0..pad]);
+}
+
+const PumpOptions = struct {
+    src_reader: std.fs.File.Reader,
+    dest_writer: std.fs.File.Writer,
+    size: usize,
+};
+
+fn pump(pumper: *Pumper, options: PumpOptions) !void {
+    std.debug.assert(pumper.buf.len > 0);
+    const size = options.size;
+    const src_reader = options.src_reader;
+    const dest_writer = options.dest_writer;
+    var i: usize = 0;
+    while (i != size) {
+        if (pumper.writableLength() > 0) {
+            const len = blk: {
+                if ((size - i) < pumper.writableLength()) {
+                    break :blk pumper.writableLength() - (size - i);
+                }
+                break :blk 0;
+            };
+            const n = try src_reader.read(pumper.writableSlice(len));
+            if (n == 0) break; // EOF
+            i += n;
+            pumper.update(n);
+        }
+        pumper.discard(try dest_writer.write(pumper.readableSlice(0)));
+    }
+    // flush remaining data
+    while (pumper.readableLength() > 0) {
+        pumper.discard(try dest_writer.write(pumper.readableSlice(0)));
+    }
+}
+
 fn unpackBootImage(self: *BootImage) !void {
-    // The first page contains the boot header
-    const header_pages: usize = 1;
     switch (self.header) {
         inline .v3, .v4 => |*value, tag| {
             const T = std.meta.TagPayload(Header, tag);
             try self.file.seekTo(0);
             value.* = try self.reader().readStruct(T);
-            if (@hasField(T, "page_size")) {
-                self.page_size = value.page_size;
-            } else {
-                self.page_size = boot_image_pagesize;
-            }
             self.image_infos.kernel = .{
-                .offset = self.page_size * header_pages,
+                // The first page contains the boot header
+                .offset = boot_image_pagesize * 1,
                 .size = value.kernel_size,
             };
             self.image_infos.ramdisk = .{
-                .offset = self.image_infos.kernel.nextAligned(self.page_size),
+                .offset = self.image_infos.kernel.nextAligned(),
                 .size = value.ramdisk_size,
             };
             if (@hasField(T, "signature_size")) {
                 self.image_infos.signature = .{
-                    .offset = self.image_infos.ramdisk.nextAligned(self.page_size),
+                    .offset = self.image_infos.ramdisk.nextAligned(),
                     .size = value.signature_size,
                 };
             }
         },
-        inline else => return error.Unsupported,
+        else => return error.UnsupportedBootImageVersion,
     }
     inline for (@typeInfo(ImageInfos).Struct.fields) |field| {
         const image_info = @field(self.image_infos, field.name);
         if (image_info.offset != 0 and image_info.size != 0) {
             try self.file.seekTo(image_info.offset);
-            var buffer: [4096]u8 = undefined;
-            var index: usize = 0;
             var file = try std.fs.cwd().createFile(field.name, .{});
             defer file.close();
-            while (index < image_info.size) {
-                const amt = try self.read(&buffer);
-                if (amt == 0) break;
-                index += amt;
-                const len = if (index > image_info.size)
-                    amt - (index - image_info.size)
-                else
-                    amt;
-                try file.writeAll(buffer[0..len]);
-            }
+            var pumper: Pumper = Pumper.init();
+            try pump(&pumper, .{
+                .src_reader = self.file.reader(),
+                .dest_writer = file.writer(),
+                .size = image_info.size,
+            });
         }
     }
 }
@@ -341,11 +247,7 @@ fn unpackBootImage(self: *BootImage) !void {
 test {
     var image: BootImage = undefined;
     image = try BootImage.unpack("testdata/boot.img");
-    switch (image.header) {
-        inline else => |value| {
-            try testing.expectEqualSlices(u8, &value.magic, boot_magic);
-        },
-    }
+    try image.repack();
 }
 
 const std = @import("std");
@@ -354,3 +256,4 @@ const os = std.os;
 const mem = std.mem;
 const testing = std.testing;
 const BootImage = @This();
+const Pumper = std.fifo.LinearFifo(u8, .{ .Static = 4096 });
