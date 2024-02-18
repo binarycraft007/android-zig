@@ -164,10 +164,10 @@ pub fn repack(self: *BootImage) !void {
 
 fn padFile(file: std.fs.File) !void {
     const pos = try file.getPos();
-    const padding = boot_image_pagesize;
     var buffer: [boot_image_pagesize]u8 = undefined;
-    const pad = (padding - (pos & (padding - 1))) & (padding - 1);
-    @memset(buffer[0..pad], 'x');
+    const pad = mem.alignForward(usize, pos, boot_image_pagesize) - pos;
+    @memset(buffer[0 .. pad - 1], 0);
+    buffer[pad - 1] = 'x';
     try file.writer().writeAll(buffer[0..pad]);
 }
 
