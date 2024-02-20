@@ -5,11 +5,6 @@ image_infos: ImageInfos = .{},
 pub const ImageInfo = struct {
     offset: usize = 0,
     size: usize = 0,
-
-    pub fn nextAligned(self: ImageInfo) usize {
-        const page_size = boot_image_pagesize;
-        return mem.alignForward(usize, self.offset + self.size, page_size);
-    }
 };
 
 pub const ImageInfos = struct {
@@ -210,18 +205,21 @@ fn unpackBootImage(self: *BootImage) !void {
             const T = std.meta.TagPayload(Header, tag);
             try self.file.seekTo(0);
             value.* = try self.reader().readStruct(T);
+            const kernel_pages = pageNumber(value.kernel_size);
+            const ramdisk_pages = pageNumber(value.ramdisk_size);
             self.image_infos.kernel = .{
                 // The first page contains the boot header
                 .offset = boot_image_pagesize * 1,
                 .size = value.kernel_size,
             };
             self.image_infos.ramdisk = .{
-                .offset = self.image_infos.kernel.nextAligned(),
+                .offset = boot_image_pagesize * (1 + kernel_pages),
                 .size = value.ramdisk_size,
             };
             if (@hasField(T, "signature_size")) {
                 self.image_infos.signature = .{
-                    .offset = self.image_infos.ramdisk.nextAligned(),
+                    .offset = boot_image_pagesize *
+                        (1 + kernel_pages + ramdisk_pages),
                     .size = value.signature_size,
                 };
             }
@@ -242,6 +240,11 @@ fn unpackBootImage(self: *BootImage) !void {
             });
         }
     }
+}
+
+fn pageNumber(image_size: usize) usize {
+    std.debug.print("{d}\n", .{image_size});
+    return (image_size + boot_image_pagesize - 1) / boot_image_pagesize;
 }
 
 test {
