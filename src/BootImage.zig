@@ -1,4 +1,5 @@
 file: std.fs.File,
+size: usize,
 header: Header,
 image_infos: ImageInfos = .{},
 
@@ -38,82 +39,117 @@ pub const HeaderVersion = enum {
     v4,
 };
 
-pub const Header = union(HeaderVersion) {
-    v0: extern struct { magic: [boot_magic_size]u8 align(1) },
-    v1: extern struct { magic: [boot_magic_size]u8 align(1) },
-    v2: extern struct { magic: [boot_magic_size]u8 align(1) },
-    v3: extern struct {
-        magic: [boot_magic_size]u8 align(1),
-        kernel_size: u32 align(1),
-        ramdisk_size: u32 align(1),
-        os_version: packed struct {
-            month: u4,
-            year: u7,
-            patch: u7,
-            minor: u7,
-            major: u7,
-        } align(1),
-        header_size: u32 align(1),
-        reserved: [4]u32 align(1),
-        header_version: u32 align(1),
-        cmdline: [boot_args_size + boot_extra_args_size]u8 align(1),
-    },
-    v4: extern struct {
-        magic: [boot_magic_size]u8 align(1),
-        kernel_size: u32 align(1),
-        ramdisk_size: u32 align(1),
-        os_version: packed struct {
-            month: u4,
-            year: u7,
-            patch: u7,
-            minor: u7,
-            major: u7,
-        } align(1),
-        header_size: u32 align(1),
-        reserved: [4]u32 align(1),
-        header_version: u32 align(1),
-        cmdline: [boot_args_size + boot_extra_args_size]u8 align(1),
-        signature_size: u32 align(1),
-    },
+pub const HeaderBase = extern struct {
+    magic: [boot_magic_size]u8 align(1),
+    kernel_size: u32 align(1),
+    ramdisk_size: u32 align(1),
+    os_version: packed struct {
+        month: u4,
+        year: u7,
+        patch: u7,
+        minor: u7,
+        major: u7,
+    } align(1),
+    header_size: u32 align(1),
+    reserved: [4]u32 align(1),
+    header_version: u32 align(1),
+    cmdline: [boot_args_size + boot_extra_args_size]u8 align(1),
 };
 
-pub const ReadError = os.ReadError;
-pub const WriteError = os.WriteError;
-pub const Reader = io.Reader(BootImage, ReadError, read);
-pub const Writer = io.Writer(BootImage, WriteError, write);
+pub const Header = extern struct {
+    base: HeaderBase,
+    signature_size: u32 align(1) = 0,
 
-pub fn reader(image: BootImage) Reader {
-    return .{ .context = image };
-}
+    pub const PageNumberKind = enum {
+        header,
+        kernel,
+        ramdisk,
+    };
 
-pub fn read(self: BootImage, buffer: []u8) ReadError!usize {
-    return self.file.read(buffer);
-}
+    pub fn version(self: Header) HeaderVersion {
+        return @enumFromInt(self.base.header_version);
+    }
 
-pub fn writer(image: BootImage) Writer {
-    return .{ .context = image };
-}
+    pub fn pageNumber(self: Header, kind: PageNumberKind) usize {
+        const image_size = switch (kind) {
+            .header => return 1,
+            .kernel => self.base.kernel_size,
+            .ramdisk => self.base.ramdisk_size,
+        };
+        return (image_size + boot_image_pagesize - 1) / boot_image_pagesize;
+    }
+};
 
-pub fn write(self: BootImage, buffer: []const u8) WriteError!usize {
-    return self.file.write(buffer);
-}
+pub const avb_footer_magic = "AVBf";
+pub const avb_magic = "AVB0";
+pub const avb_footer_magic_len = 4;
+pub const avb_magic_len = 4;
+pub const avb_release_string_size = 48;
+
+pub const AvbFooter = extern struct {
+    magic: [avb_footer_magic_len]u8 align(1),
+    version_major: u32 align(1),
+    version_minor: u32 align(1),
+    original_image_size: u32 align(1),
+    vbmeta_offset: u32 align(1),
+    vbmeta_size: u32 align(1),
+    reserved: [28]u8 align(1),
+};
+
+pub const AvbVBMetaImageHeader = extern struct {
+    magic: [avb_magic_len]u8 align(1),
+    required_libavb_version_major: u32 align(1),
+    required_libavb_version_minor: u32 align(1),
+    authentication_data_block_size: u64 align(1),
+    auxiliary_data_block_size: u64 align(1),
+    algorithm_type: u32 align(1),
+    hash_offset: u64 align(1),
+    hash_size: u64 align(1),
+    signature_offset: u64 align(1),
+    signature_size: u64 align(1),
+    public_key_offset: u64 align(1),
+    public_key_size: u64 align(1),
+    public_key_metadata_offset: u64 align(1),
+    public_key_metadata_size: u64 align(1),
+    descriptors_offset: u64 align(1),
+    descriptors_size: u64 align(1),
+    rollback_index: u64 align(1),
+    flags: u32 align(1),
+    rollback_index_location: u32 align(1),
+    release_string: [avb_release_string_size]u8 align(1),
+    reserved: [80]u8 align(1),
+};
 
 pub fn unpack(path: []const u8) !BootImage {
     var image: BootImage = undefined;
     var file = try std.fs.cwd().openFile(path, .{});
     defer file.close();
-    const kind_raw = try file.reader().readBytesNoEof(8);
+    const metadata = try file.metadata();
+    const header = try file.reader().readBytesNoEof(boot_image_pagesize);
+    var stream = std.io.fixedBufferStream(&header);
+    const kind_raw = try stream.reader().readBytesNoEof(8);
     if (std.mem.eql(u8, &kind_raw, boot_magic)) {
-        try file.reader().skipBytes(8 * 4, .{});
-        const header_version_raw = try file.reader().readBytesNoEof(4);
+        try stream.reader().skipBytes(8 * 4, .{});
+        const header_version_raw = try stream.reader().readBytesNoEof(4);
         const header_version: u32 = @bitCast(header_version_raw);
+        stream.reset();
         switch (@as(HeaderVersion, @enumFromInt(header_version))) {
             .v0, .v1, .v2 => return error.UnsupportedBootImageVersion,
             .v3 => {
-                image = .{ .file = file, .header = .{ .v3 = undefined } };
+                image = .{
+                    .file = file,
+                    .size = metadata.size(),
+                    .header = .{
+                        .base = try stream.reader().readStruct(HeaderBase),
+                    },
+                };
             },
             .v4 => {
-                image = .{ .file = file, .header = .{ .v4 = undefined } };
+                image = .{
+                    .file = file,
+                    .size = metadata.size(),
+                    .header = try stream.reader().readStruct(Header),
+                };
             },
         }
         try image.unpackBootImage();
@@ -132,17 +168,18 @@ pub fn repack(self: *BootImage) !void {
         const image_info = @field(self.image_infos, field.name);
         if (image_info.offset != 0 and image_info.size != 0) {
             const stat = try std.fs.cwd().statFile(field.name);
-            switch (self.header) {
-                inline .v3, .v4 => |*value| {
-                    const field_name = field.name ++ "_size";
-                    if (@hasField(@TypeOf(value.*), field_name)) {
-                        @field(value, field_name) = @intCast(stat.size);
-                        try file.writer().writeStruct(value.*);
-                    }
-                },
-                else => return error.UnsupportedBootImageVersion,
+            const field_name = field.name ++ "_size";
+            if (@hasField(@TypeOf(self.header.base), field_name)) {
+                @field(self.header.base, field_name) = @intCast(stat.size);
+            } else if (@hasField(@TypeOf(self.header), field_name)) {
+                @field(self.header, field_name) = @intCast(stat.size);
             }
         }
+    }
+    switch (self.header.version()) {
+        .v3 => try file.writer().writeStruct(self.header.base),
+        .v4 => try file.writer().writeStruct(self.header),
+        else => unreachable,
     }
     try padFile(file);
     inline for (@typeInfo(ImageInfos).Struct.fields) |field| {
@@ -150,8 +187,9 @@ pub fn repack(self: *BootImage) !void {
         if (image_info.offset != 0 and image_info.size != 0) {
             const img = try std.fs.cwd().openFile(field.name, .{});
             defer img.close();
-            var pumper: Pumper = Pumper.init();
-            try pumper.pump(img.reader(), file.writer());
+            const pos = try file.getPos();
+            _ = try img.copyRangeAll(0, file, pos, image_info.size);
+            try file.seekBy(@intCast(image_info.size));
             try padFile(file);
         }
     }
@@ -161,8 +199,7 @@ fn padFile(file: std.fs.File) !void {
     const pos = try file.getPos();
     var buffer: [boot_image_pagesize]u8 = undefined;
     const pad = mem.alignForward(usize, pos, boot_image_pagesize) - pos;
-    @memset(buffer[0 .. pad - 1], 0);
-    buffer[pad - 1] = 'x';
+    @memset(buffer[0..pad], 0x0);
     try file.writer().writeAll(buffer[0..pad]);
 }
 
@@ -172,84 +209,39 @@ const PumpOptions = struct {
     size: usize,
 };
 
-fn pump(pumper: *Pumper, options: PumpOptions) !void {
-    std.debug.assert(pumper.buf.len > 0);
-    const size = options.size;
-    const src_reader = options.src_reader;
-    const dest_writer = options.dest_writer;
-    var i: usize = 0;
-    while (i != size) {
-        if (pumper.writableLength() > 0) {
-            const len = blk: {
-                if ((size - i) < pumper.writableLength()) {
-                    break :blk pumper.writableLength() - (size - i);
-                }
-                break :blk 0;
-            };
-            const n = try src_reader.read(pumper.writableSlice(len));
-            if (n == 0) break; // EOF
-            i += n;
-            pumper.update(n);
-        }
-        pumper.discard(try dest_writer.write(pumper.readableSlice(0)));
-    }
-    // flush remaining data
-    while (pumper.readableLength() > 0) {
-        pumper.discard(try dest_writer.write(pumper.readableSlice(0)));
-    }
-}
-
 fn unpackBootImage(self: *BootImage) !void {
-    switch (self.header) {
-        inline .v3, .v4 => |*value, tag| {
-            const T = std.meta.TagPayload(Header, tag);
-            try self.file.seekTo(0);
-            value.* = try self.reader().readStruct(T);
-            const kernel_pages = pageNumber(value.kernel_size);
-            const ramdisk_pages = pageNumber(value.ramdisk_size);
-            self.image_infos.kernel = .{
-                // The first page contains the boot header
-                .offset = boot_image_pagesize * 1,
-                .size = value.kernel_size,
-            };
-            self.image_infos.ramdisk = .{
-                .offset = boot_image_pagesize * (1 + kernel_pages),
-                .size = value.ramdisk_size,
-            };
-            if (@hasField(T, "signature_size")) {
-                self.image_infos.signature = .{
-                    .offset = boot_image_pagesize *
-                        (1 + kernel_pages + ramdisk_pages),
-                    .size = value.signature_size,
-                };
-            }
-        },
-        else => return error.UnsupportedBootImageVersion,
+    const kernel_pages = self.header.pageNumber(.kernel);
+    const ramdisk_pages = self.header.pageNumber(.ramdisk);
+    self.image_infos.kernel = .{
+        // The first page contains the boot header
+        .offset = boot_image_pagesize * 1,
+        .size = self.header.base.kernel_size,
+    };
+    self.image_infos.ramdisk = .{
+        .offset = boot_image_pagesize * (1 + kernel_pages),
+        .size = self.header.base.ramdisk_size,
+    };
+    if (self.header.signature_size > 0) {
+        self.image_infos.signature = .{
+            .offset = boot_image_pagesize *
+                (1 + kernel_pages + ramdisk_pages),
+            .size = self.header.signature_size,
+        };
     }
     inline for (@typeInfo(ImageInfos).Struct.fields) |field| {
         const image_info = @field(self.image_infos, field.name);
         if (image_info.offset != 0 and image_info.size != 0) {
-            try self.file.seekTo(image_info.offset);
             var file = try std.fs.cwd().createFile(field.name, .{});
             defer file.close();
-            var pumper: Pumper = Pumper.init();
-            try pump(&pumper, .{
-                .src_reader = self.file.reader(),
-                .dest_writer = file.writer(),
-                .size = image_info.size,
-            });
+            const offset = image_info.offset;
+            const size = image_info.size;
+            _ = try self.file.copyRangeAll(offset, file, 0, size);
         }
     }
 }
 
-fn pageNumber(image_size: usize) usize {
-    std.debug.print("{d}\n", .{image_size});
-    return (image_size + boot_image_pagesize - 1) / boot_image_pagesize;
-}
-
 test {
-    var image: BootImage = undefined;
-    image = try BootImage.unpack("testdata/boot.img");
+    var image = try BootImage.unpack("testdata/boot.img");
     try image.repack();
 }
 
@@ -259,4 +251,3 @@ const os = std.os;
 const mem = std.mem;
 const testing = std.testing;
 const BootImage = @This();
-const Pumper = std.fifo.LinearFifo(u8, .{ .Static = 4096 });
