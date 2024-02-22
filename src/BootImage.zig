@@ -86,6 +86,10 @@ pub const VerifiedBoot = struct {
     meta: MetaImageHeader = .{},
     payload: [pagesize]u8 = [1]u8{0} ** pagesize,
 
+    pub fn isValid(self: VerifiedBoot) bool {
+        return self.footer.isValid() and self.meta.isValid();
+    }
+
     pub fn vbmeta(self: VerifiedBoot) Footer.VbMeta {
         return self.footer.vbmeta();
     }
@@ -99,7 +103,7 @@ pub const VerifiedBoot = struct {
             try stream.seekableStream.seekTo(end - @sizeOf(Footer));
         }
         vb.footer = try Footer.read(stream.reader());
-        if (vb.footer.check()) {
+        if (vb.footer.isValid()) {
             const meta_size = vb.vbmeta().size;
             const meta_offset = vb.vbmeta().offset;
             if (std.meta.hasMethod(@TypeOf(stream), "seekTo")) {
@@ -108,7 +112,7 @@ pub const VerifiedBoot = struct {
                 try stream.seekableStream.seekTo(meta_offset);
             }
             vb.meta = try MetaImageHeader.read(stream.reader());
-            if (vb.meta.check()) {
+            if (vb.meta.isValid()) {
                 const size = meta_size - @sizeOf(MetaImageHeader);
                 _ = try stream.reader().readAll(vb.payload[0..size]);
                 return vb;
@@ -146,7 +150,7 @@ pub const VerifiedBoot = struct {
             return try reader.readStruct(Footer);
         }
 
-        pub fn check(self: Footer) bool {
+        pub fn isValid(self: Footer) bool {
             return mem.eql(u8, &self.magic, Footer.magic);
         }
 
@@ -219,7 +223,7 @@ pub const VerifiedBoot = struct {
             return try reader.readStruct(MetaImageHeader);
         }
 
-        pub fn check(self: MetaImageHeader) bool {
+        pub fn isValid(self: MetaImageHeader) bool {
             return mem.eql(u8, &self.magic, MetaImageHeader.magic);
         }
     };
@@ -298,7 +302,7 @@ pub fn repack(self: *BootImage) !void {
             try padFile(file);
         }
     }
-    if (self.avb.footer.check() and self.avb.meta.check()) {
+    if (self.avb.isValid()) {
         const cur_pos = try file.getPos();
         self.avb.footer.patch(.{
             .original_image_size = cur_pos,
@@ -357,11 +361,10 @@ fn unpackBootImage(self: *BootImage) !void {
             _ = try self.file.copyRangeAll(offset, file, 0, size);
         }
     }
-    const avb = VerifiedBoot.read(self.file) catch |err| switch (err) {
+    self.avb = VerifiedBoot.read(self.file) catch |err| switch (err) {
         error.NoMetaImageHeader, error.NoFooter => return,
         else => |e| return e,
     };
-    self.avb = avb;
 }
 
 test {
