@@ -1,6 +1,7 @@
 file: std.fs.File,
 size: usize,
 header: Header,
+avb: VerifiedBoot = .{},
 image_infos: ImageInfos = .{},
 
 pub const ImageInfo = struct {
@@ -19,7 +20,7 @@ pub const boot_magic_size = 8;
 pub const boot_name_size = 16;
 pub const boot_args_size = 512;
 pub const boot_extra_args_size = 1024;
-pub const boot_image_pagesize = 4096;
+pub const pagesize = 4096;
 pub const vendor_boot_magic = "VNDRBOOT";
 pub const vendor_boot_magic_size = 8;
 pub const vendor_boot_args_size = 2048;
@@ -76,48 +77,152 @@ pub const Header = extern struct {
             .kernel => self.base.kernel_size,
             .ramdisk => self.base.ramdisk_size,
         };
-        return (image_size + boot_image_pagesize - 1) / boot_image_pagesize;
+        return (image_size + pagesize - 1) / pagesize;
     }
 };
 
-pub const avb_footer_magic = "AVBf";
-pub const avb_magic = "AVB0";
-pub const avb_footer_magic_len = 4;
-pub const avb_magic_len = 4;
-pub const avb_release_string_size = 48;
+pub const VerifiedBoot = struct {
+    footer: Footer = .{},
+    meta: MetaImageHeader = .{},
+    payload: [pagesize]u8 = [1]u8{0} ** pagesize,
 
-pub const AvbFooter = extern struct {
-    magic: [avb_footer_magic_len]u8 align(1),
-    version_major: u32 align(1),
-    version_minor: u32 align(1),
-    original_image_size: u32 align(1),
-    vbmeta_offset: u32 align(1),
-    vbmeta_size: u32 align(1),
-    reserved: [28]u8 align(1),
-};
+    pub fn vbmeta(self: VerifiedBoot) Footer.VbMeta {
+        return self.footer.vbmeta();
+    }
 
-pub const AvbVBMetaImageHeader = extern struct {
-    magic: [avb_magic_len]u8 align(1),
-    required_libavb_version_major: u32 align(1),
-    required_libavb_version_minor: u32 align(1),
-    authentication_data_block_size: u64 align(1),
-    auxiliary_data_block_size: u64 align(1),
-    algorithm_type: u32 align(1),
-    hash_offset: u64 align(1),
-    hash_size: u64 align(1),
-    signature_offset: u64 align(1),
-    signature_size: u64 align(1),
-    public_key_offset: u64 align(1),
-    public_key_size: u64 align(1),
-    public_key_metadata_offset: u64 align(1),
-    public_key_metadata_size: u64 align(1),
-    descriptors_offset: u64 align(1),
-    descriptors_size: u64 align(1),
-    rollback_index: u64 align(1),
-    flags: u32 align(1),
-    rollback_index_location: u32 align(1),
-    release_string: [avb_release_string_size]u8 align(1),
-    reserved: [80]u8 align(1),
+    pub fn read(stream: anytype) !VerifiedBoot {
+        var vb: VerifiedBoot = .{};
+        if (std.meta.hasMethod(@TypeOf(stream), "seekFromEnd")) {
+            try stream.seekFromEnd(-(@sizeOf(Footer)));
+        } else {
+            const end = try stream.seekableStream.getEndPos();
+            try stream.seekableStream.seekTo(end - @sizeOf(Footer));
+        }
+        vb.footer = try Footer.read(stream.reader());
+        if (vb.footer.check()) {
+            const meta_size = vb.vbmeta().size;
+            const meta_offset = vb.vbmeta().offset;
+            if (std.meta.hasMethod(@TypeOf(stream), "seekTo")) {
+                try stream.seekTo(meta_offset);
+            } else {
+                try stream.seekableStream.seekTo(meta_offset);
+            }
+            vb.meta = try MetaImageHeader.read(stream.reader());
+            if (vb.meta.check()) {
+                const size = meta_size - @sizeOf(MetaImageHeader);
+                _ = try stream.reader().readAll(vb.payload[0..size]);
+                return vb;
+            }
+            return error.NoMetaImageHeader;
+        }
+        return error.NoFooter;
+    }
+
+    pub fn writeMeta(self: VerifiedBoot, writer: anytype) !void {
+        try writer.writeStruct(self.meta);
+        const size = self.vbmeta().size - @sizeOf(MetaImageHeader);
+        try writer.writeAll(self.payload[0..size]);
+    }
+
+    pub fn writeFooter(self: VerifiedBoot, writer: anytype) !void {
+        const footer_start = pagesize - @sizeOf(Footer);
+        var buffer: [pagesize]u8 = [1]u8{0} ** pagesize;
+        @memcpy(buffer[footer_start..], mem.asBytes(&self.footer));
+        try writer.writeAll(&buffer);
+    }
+
+    pub const Footer = extern struct {
+        pub const magic = "AVBf";
+
+        magic: [magic.len]u8 align(1) = [1]u8{0} ** magic.len,
+        version_major: u32 align(1) = 0,
+        version_minor: u32 align(1) = 0,
+        original_image_size: u64 align(1) = 0,
+        vbmeta_offset: u64 align(1) = 0,
+        vbmeta_size: u64 align(1) = 0,
+        reserved: [28]u8 align(1) = [1]u8{0} ** 28,
+
+        pub fn read(reader: anytype) !Footer {
+            return try reader.readStruct(Footer);
+        }
+
+        pub fn check(self: Footer) bool {
+            return mem.eql(u8, &self.magic, Footer.magic);
+        }
+
+        pub const VbMeta = struct {
+            offset: usize,
+            size: usize,
+        };
+
+        pub fn vbmeta(self: Footer) VbMeta {
+            return .{
+                .offset = @byteSwap(self.vbmeta_offset),
+                .size = @byteSwap(self.vbmeta_size),
+            };
+        }
+
+        pub fn metaOffset(self: Footer) usize {
+            return @byteSwap(self.vbmeta_offset);
+        }
+
+        pub fn originalImageSize(self: Footer) usize {
+            return @byteSwap(self.original_image_size);
+        }
+
+        pub const PatchOptions = struct {
+            original_image_size: u64,
+            vbmeta_offset: u64,
+        };
+
+        pub fn patch(self: *Footer, options: PatchOptions) void {
+            self.setOriginalImageSize(options.original_image_size);
+            self.setMetaOffset(options.vbmeta_offset);
+        }
+
+        pub fn setMetaOffset(self: *Footer, offset: usize) void {
+            self.vbmeta_offset = @byteSwap(offset);
+        }
+
+        pub fn setOriginalImageSize(self: *Footer, size: usize) void {
+            self.original_image_size = @byteSwap(size);
+        }
+    };
+
+    pub const MetaImageHeader = extern struct {
+        pub const magic = "AVB0";
+        pub const release_size = 48;
+
+        magic: [magic.len]u8 align(1) = [1]u8{0} ** magic.len,
+        required_libavb_version_major: u32 align(1) = 0,
+        required_libavb_version_minor: u32 align(1) = 0,
+        authentication_data_block_size: u64 align(1) = 0,
+        auxiliary_data_block_size: u64 align(1) = 0,
+        algorithm_type: u32 align(1) = 0,
+        hash_offset: u64 align(1) = 0,
+        hash_size: u64 align(1) = 0,
+        signature_offset: u64 align(1) = 0,
+        signature_size: u64 align(1) = 0,
+        public_key_offset: u64 align(1) = 0,
+        public_key_size: u64 align(1) = 0,
+        public_key_metadata_offset: u64 align(1) = 0,
+        public_key_metadata_size: u64 align(1) = 0,
+        descriptors_offset: u64 align(1) = 0,
+        descriptors_size: u64 align(1) = 0,
+        rollback_index: u64 align(1) = 0,
+        flags: u32 align(1) = 0,
+        rollback_index_location: u32 align(1) = 0,
+        release_string: [release_size]u8 align(1) = [1]u8{0} ** release_size,
+        reserved: [80]u8 align(1) = [1]u8{0} ** 80,
+
+        pub fn read(reader: anytype) !MetaImageHeader {
+            return try reader.readStruct(MetaImageHeader);
+        }
+
+        pub fn check(self: MetaImageHeader) bool {
+            return mem.eql(u8, &self.magic, MetaImageHeader.magic);
+        }
+    };
 };
 
 pub fn unpack(path: []const u8) !BootImage {
@@ -125,7 +230,7 @@ pub fn unpack(path: []const u8) !BootImage {
     var file = try std.fs.cwd().openFile(path, .{});
     defer file.close();
     const metadata = try file.metadata();
-    const header = try file.reader().readBytesNoEof(boot_image_pagesize);
+    const header = try file.reader().readBytesNoEof(pagesize);
     var stream = std.io.fixedBufferStream(&header);
     const kind_raw = try stream.reader().readBytesNoEof(8);
     if (std.mem.eql(u8, &kind_raw, boot_magic)) {
@@ -193,37 +298,51 @@ pub fn repack(self: *BootImage) !void {
             try padFile(file);
         }
     }
+    if (self.avb.footer.check() and self.avb.meta.check()) {
+        const cur_pos = try file.getPos();
+        self.avb.footer.patch(.{
+            .original_image_size = cur_pos,
+            .vbmeta_offset = cur_pos,
+        });
+        try self.avb.writeMeta(file.writer());
+        try padToOriginalSize(self.size, file, true);
+        try self.avb.writeFooter(file.writer());
+    } else {
+        try padToOriginalSize(self.size, file, false);
+    }
 }
 
 fn padFile(file: std.fs.File) !void {
     const pos = try file.getPos();
-    var buffer: [boot_image_pagesize]u8 = undefined;
-    const pad = mem.alignForward(usize, pos, boot_image_pagesize) - pos;
+    var buffer: [pagesize]u8 = undefined;
+    const pad = mem.alignForward(usize, pos, pagesize) - pos;
     @memset(buffer[0..pad], 0x0);
     try file.writer().writeAll(buffer[0..pad]);
 }
 
-const PumpOptions = struct {
-    src_reader: std.fs.File.Reader,
-    dest_writer: std.fs.File.Writer,
-    size: usize,
-};
+fn padToOriginalSize(size: usize, file: std.fs.File, avb: bool) !void {
+    try padFile(file);
+    const pos = try file.getPos();
+    const pages = (size - pos) / pagesize - @intFromBool(avb);
+    var buffer: [pagesize]u8 = [1]u8{0} ** pagesize;
+    try file.writer().writeBytesNTimes(&buffer, pages);
+}
 
 fn unpackBootImage(self: *BootImage) !void {
     const kernel_pages = self.header.pageNumber(.kernel);
     const ramdisk_pages = self.header.pageNumber(.ramdisk);
     self.image_infos.kernel = .{
         // The first page contains the boot header
-        .offset = boot_image_pagesize * 1,
+        .offset = pagesize * 1,
         .size = self.header.base.kernel_size,
     };
     self.image_infos.ramdisk = .{
-        .offset = boot_image_pagesize * (1 + kernel_pages),
+        .offset = pagesize * (1 + kernel_pages),
         .size = self.header.base.ramdisk_size,
     };
     if (self.header.signature_size > 0) {
         self.image_infos.signature = .{
-            .offset = boot_image_pagesize *
+            .offset = pagesize *
                 (1 + kernel_pages + ramdisk_pages),
             .size = self.header.signature_size,
         };
@@ -238,6 +357,11 @@ fn unpackBootImage(self: *BootImage) !void {
             _ = try self.file.copyRangeAll(offset, file, 0, size);
         }
     }
+    const avb = VerifiedBoot.read(self.file) catch |err| switch (err) {
+        error.NoMetaImageHeader, error.NoFooter => return,
+        else => |e| return e,
+    };
+    self.avb = avb;
 }
 
 test {
