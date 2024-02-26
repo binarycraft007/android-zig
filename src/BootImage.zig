@@ -51,7 +51,7 @@ pub const Header = extern struct {
         v4,
     };
 
-    pub const PageNumberKind = enum {
+    pub const PageKind = enum {
         header,
         kernel,
         ramdisk,
@@ -61,7 +61,7 @@ pub const Header = extern struct {
         return @enumFromInt(self.base.header_version);
     }
 
-    pub fn pageNumber(self: Header, kind: PageNumberKind) usize {
+    pub fn pageNumber(self: Header, kind: PageKind) usize {
         const image_size = switch (kind) {
             .header => return 1,
             .kernel => self.base.kernel_size,
@@ -179,23 +179,24 @@ fn padToOriginalSize(size: usize, file: std.fs.File, avb: bool) !void {
 }
 
 fn unpackImpl(self: *BootImage) !void {
-    const kernel_pages = self.header.pageNumber(.kernel);
-    const ramdisk_pages = self.header.pageNumber(.ramdisk);
-    self.image_infos.kernel = .{
-        // The first page contains the boot header
-        .offset = page_size * 1,
-        .size = self.header.base.kernel_size,
-    };
-    self.image_infos.ramdisk = .{
-        .offset = page_size * (1 + kernel_pages),
-        .size = self.header.base.ramdisk_size,
-    };
-    if (self.header.signature_size > 0) {
-        self.image_infos.signature = .{
-            .offset = page_size *
-                (1 + kernel_pages + ramdisk_pages),
-            .size = self.header.signature_size,
-        };
+    var num_pages: usize = page_size;
+    inline for (@typeInfo(ImageInfos).Struct.fields) |field| {
+        defer {
+            if (std.meta.stringToEnum(Header.PageKind, field.name)) |kind| {
+                num_pages += page_size * self.header.pageNumber(kind);
+            }
+        }
+        const field_name = field.name ++ "_size";
+        var size: usize = 0;
+        if (@hasField(@TypeOf(self.header.base), field_name)) {
+            size = @field(self.header.base, field_name);
+        } else if (@hasField(@TypeOf(self.header), field_name)) {
+            size = @field(self.header, field_name);
+        } else {
+            continue;
+        }
+        @field(self.image_infos, field.name).size = size;
+        @field(self.image_infos, field.name).offset = num_pages;
     }
     inline for (@typeInfo(ImageInfos).Struct.fields) |field| {
         const image_info = @field(self.image_infos, field.name);
