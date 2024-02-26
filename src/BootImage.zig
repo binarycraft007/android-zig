@@ -197,14 +197,11 @@ fn unpackImpl(self: *BootImage) !void {
         }
         @field(self.image_infos, field.name).size = size;
         @field(self.image_infos, field.name).offset = num_pages;
-    }
-    inline for (@typeInfo(ImageInfos).Struct.fields) |field| {
         const image_info = @field(self.image_infos, field.name);
         if (image_info.offset != 0 and image_info.size != 0) {
             var file = try std.fs.cwd().createFile(field.name, .{});
             defer file.close();
             const offset = image_info.offset;
-            const size = image_info.size;
             _ = try self.file.copyRangeAll(offset, file, 0, size);
         }
     }
