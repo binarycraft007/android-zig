@@ -32,34 +32,34 @@ pub const vendor_ramdisk_type_dlkm = 3;
 pub const vendor_ramdisk_name_size = 32;
 pub const vendor_ramdisk_table_entry_board_id_size = 16;
 
-pub const HeaderVersion = enum {
-    v0,
-    v1,
-    v2,
-    v3,
-    v4,
-};
-
-pub const HeaderBase = extern struct {
-    magic: [boot_magic_size]u8 align(1),
-    kernel_size: u32 align(1),
-    ramdisk_size: u32 align(1),
-    os_version: packed struct {
-        month: u4,
-        year: u7,
-        patch: u7,
-        minor: u7,
-        major: u7,
-    } align(1),
-    header_size: u32 align(1),
-    reserved: [4]u32 align(1),
-    header_version: u32 align(1),
-    cmdline: [boot_args_size + boot_extra_args_size]u8 align(1),
-};
-
 pub const Header = extern struct {
-    base: HeaderBase,
+    base: Base,
     signature_size: u32 align(1) = 0,
+
+    pub const Base = extern struct {
+        magic: [boot_magic_size]u8 align(1),
+        kernel_size: u32 align(1),
+        ramdisk_size: u32 align(1),
+        os_version: packed struct {
+            month: u4,
+            year: u7,
+            patch: u7,
+            minor: u7,
+            major: u7,
+        } align(1),
+        header_size: u32 align(1),
+        reserved: [4]u32 align(1),
+        header_version: u32 align(1),
+        cmdline: [boot_args_size + boot_extra_args_size]u8 align(1),
+    };
+
+    pub const Version = enum {
+        v0,
+        v1,
+        v2,
+        v3,
+        v4,
+    };
 
     pub const PageNumberKind = enum {
         header,
@@ -67,7 +67,7 @@ pub const Header = extern struct {
         ramdisk,
     };
 
-    pub fn version(self: Header) HeaderVersion {
+    pub fn version(self: Header) Version {
         return @enumFromInt(self.base.header_version);
     }
 
@@ -242,14 +242,13 @@ pub fn unpack(path: []const u8) !BootImage {
         const header_version_raw = try stream.reader().readBytesNoEof(4);
         const header_version: u32 = @bitCast(header_version_raw);
         stream.reset();
-        switch (@as(HeaderVersion, @enumFromInt(header_version))) {
-            .v0, .v1, .v2 => return error.UnsupportedBootImageVersion,
+        switch (@as(Header.Version, @enumFromInt(header_version))) {
             .v3 => {
                 image = .{
                     .file = file,
                     .size = metadata.size(),
                     .header = .{
-                        .base = try stream.reader().readStruct(HeaderBase),
+                        .base = try stream.reader().readStruct(Header.Base),
                     },
                 };
             },
@@ -259,6 +258,10 @@ pub fn unpack(path: []const u8) !BootImage {
                     .size = metadata.size(),
                     .header = try stream.reader().readStruct(Header),
                 };
+            },
+            else => |version| {
+                std.log.err("unsupported image version: {}\n", .{version});
+                return error.UnsupportedBootImageVersion;
             },
         }
         try image.unpackBootImage();
@@ -282,13 +285,19 @@ pub fn repack(self: *BootImage) !void {
                 @field(self.header.base, field_name) = @intCast(stat.size);
             } else if (@hasField(@TypeOf(self.header), field_name)) {
                 @field(self.header, field_name) = @intCast(stat.size);
+            } else {
+                continue;
             }
+            @field(self.image_infos, field.name).size = @intCast(stat.size);
         }
     }
     switch (self.header.version()) {
         .v3 => try file.writer().writeStruct(self.header.base),
         .v4 => try file.writer().writeStruct(self.header),
-        else => unreachable,
+        else => |version| {
+            std.log.err("unsupported image version: {}\n", .{version});
+            return error.UnsupportedBootImageVersion;
+        },
     }
     try padFile(file);
     inline for (@typeInfo(ImageInfos).Struct.fields) |field| {
