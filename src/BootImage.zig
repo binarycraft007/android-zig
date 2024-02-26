@@ -79,37 +79,34 @@ pub fn unpack(path: []const u8) !BootImage {
     const header = try file.reader().readBytesNoEof(page_size);
     var stream = std.io.fixedBufferStream(&header);
     const kind_raw = try stream.reader().readBytesNoEof(8);
-    if (std.mem.eql(u8, &kind_raw, magic)) {
-        try stream.reader().skipBytes(8 * 4, .{});
-        const header_version_raw = try stream.reader().readBytesNoEof(4);
-        const header_version: u32 = @bitCast(header_version_raw);
-        stream.reset();
-        switch (@as(Header.Version, @enumFromInt(header_version))) {
-            .v3 => {
-                image = .{
-                    .file = file,
-                    .size = metadata.size(),
-                    .header = .{
-                        .base = try stream.reader().readStruct(Header.Base),
-                    },
-                };
-            },
-            .v4 => {
-                image = .{
-                    .file = file,
-                    .size = metadata.size(),
-                    .header = try stream.reader().readStruct(Header),
-                };
-            },
-            else => |version| {
-                std.log.err("unsupported image version: {}\n", .{version});
-                return error.UnsupportedBootImageVersion;
-            },
-        }
-        try image.unpackImpl();
-    } else {
-        return error.NotAndroidBootImage;
+    if (!std.mem.eql(u8, &kind_raw, magic)) return error.NotBootImage;
+    try stream.reader().skipBytes(8 * 4, .{});
+    const header_version_raw = try stream.reader().readBytesNoEof(4);
+    const header_version: u32 = @bitCast(header_version_raw);
+    stream.reset();
+    switch (@as(Header.Version, @enumFromInt(header_version))) {
+        .v3 => {
+            image = .{
+                .file = file,
+                .size = metadata.size(),
+                .header = .{
+                    .base = try stream.reader().readStruct(Header.Base),
+                },
+            };
+        },
+        .v4 => {
+            image = .{
+                .file = file,
+                .size = metadata.size(),
+                .header = try stream.reader().readStruct(Header),
+            };
+        },
+        else => |version| {
+            std.log.err("unsupported image version: {}\n", .{version});
+            return error.UnsupportedBootImageVersion;
+        },
     }
+    try image.unpackImpl();
     return image;
 }
 
