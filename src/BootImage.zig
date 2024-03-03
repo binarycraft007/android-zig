@@ -23,7 +23,7 @@ pub const extra_args_size = 1024;
 
 pub const VerifiedBoot = @import("BootImage/VerifiedBoot.zig");
 pub const Header = extern struct {
-    base: Base,
+    base: Base align(1),
     signature_size: u32 align(1) = 0,
 
     pub const Base = extern struct {
@@ -84,11 +84,16 @@ pub fn unpack(path: []const u8) !BootImage {
     const header_version_raw = try stream.reader().readBytesNoEof(4);
     const header_version: u32 = @bitCast(header_version_raw);
     stream.reset();
+    const image_size = switch (metadata.kind()) {
+        .file => metadata.size(),
+        .block_device => try ioctl_BLKGETSIZE64(file.handle),
+        else => return error.UnsupportedImageFormat,
+    };
     switch (@as(Header.Version, @enumFromInt(header_version))) {
         .v3 => {
             image = .{
                 .file = file,
-                .size = metadata.size(),
+                .size = image_size,
                 .header = .{
                     .base = try stream.reader().readStruct(Header.Base),
                 },
@@ -97,7 +102,7 @@ pub fn unpack(path: []const u8) !BootImage {
         .v4 => {
             image = .{
                 .file = file,
-                .size = metadata.size(),
+                .size = image_size,
                 .header = try stream.reader().readStruct(Header),
             };
         },
@@ -209,6 +214,32 @@ fn unpackImpl(self: *BootImage) !void {
         error.NoMetaImageHeader, error.NoFooter => return,
         else => |e| return e,
     };
+}
+
+const BLKGETSIZE64 = 0x80081272;
+
+pub const IoCtl_BLKGETSIZE64_Error = error{
+    FileSystem,
+    InterfaceNotFound,
+} || os.UnexpectedError;
+
+pub fn ioctl_BLKGETSIZE64(fd: os.fd_t) IoCtl_BLKGETSIZE64_Error!usize {
+    var size: usize = 0;
+    while (true) {
+        const rc = os.system.ioctl(fd, BLKGETSIZE64, @intFromPtr(&size));
+        switch (os.errno(rc)) {
+            .SUCCESS => return size,
+            .INVAL => unreachable, // Bad parameters.
+            .NOTTY => unreachable,
+            .NXIO => unreachable,
+            .BADF => unreachable, // Always a race condition.
+            .FAULT => unreachable, // Bad pointer parameter.
+            .INTR => continue,
+            .IO => return error.FileSystem,
+            .NODEV => return error.InterfaceNotFound,
+            else => |err| return os.unexpectedErrno(err),
+        }
+    }
 }
 
 test {
