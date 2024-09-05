@@ -221,13 +221,13 @@ const BLKGETSIZE64 = 0x80081272;
 pub const IoCtl_BLKGETSIZE64_Error = error{
     FileSystem,
     InterfaceNotFound,
-} || os.UnexpectedError;
+} || std.posix.UnexpectedError;
 
-pub fn ioctl_BLKGETSIZE64(fd: os.fd_t) IoCtl_BLKGETSIZE64_Error!usize {
+pub fn ioctl_BLKGETSIZE64(fd: std.posix.fd_t) IoCtl_BLKGETSIZE64_Error!usize {
     var size: usize = 0;
     while (true) {
-        const rc = os.system.ioctl(fd, BLKGETSIZE64, @intFromPtr(&size));
-        switch (os.errno(rc)) {
+        const rc = std.posix.system.ioctl(fd, BLKGETSIZE64, @intFromPtr(&size));
+        switch (std.posix.errno(rc)) {
             .SUCCESS => return size,
             .INVAL => unreachable, // Bad parameters.
             .NOTTY => unreachable,
@@ -237,7 +237,7 @@ pub fn ioctl_BLKGETSIZE64(fd: os.fd_t) IoCtl_BLKGETSIZE64_Error!usize {
             .INTR => continue,
             .IO => return error.FileSystem,
             .NODEV => return error.InterfaceNotFound,
-            else => |err| return os.unexpectedErrno(err),
+            else => |err| return std.posix.unexpectedErrno(err),
         }
     }
 }
